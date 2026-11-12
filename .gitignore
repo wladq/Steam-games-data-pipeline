@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Editor
+.vscode/
+.idea/
+
+# Project: downloaded data and local DB settings (never commit)
+tmp/
+db_config.json
+*.log
+
+# Secrets
+.env
+kaggle.json
