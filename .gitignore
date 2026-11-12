@@ -17,3 +17,6 @@ db_config.json
 # Secrets
 .env
 kaggle.json
+
+# Claude Code local settings
+.claude/settings.local.json
