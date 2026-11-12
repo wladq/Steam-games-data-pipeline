@@ -8,6 +8,7 @@ venv/
 # Editor
 .vscode/
 .idea/
+*.swp
 
 # Project: downloaded data and local DB settings (never commit)
 tmp/

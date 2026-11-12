@@ -10,4 +10,4 @@ Run with ``python -m get_data --help``.  The steps live in separate modules:
 - cli.py              argparse + logging + the orchestration in run()
 """
 
-__version__ = "0.2.0"
+__version__ = "0.2.0"  # REMINDER: run a security audit of the project before releasing 1.0
