@@ -14,6 +14,7 @@ venv/
 tmp/
 db_config.json
 *.log
+logs/
 
 # Secrets
 .env

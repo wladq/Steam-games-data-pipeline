@@ -53,10 +53,35 @@ def _make_api():
     return api
 
 
-def download_dataset_file(dataset: str, file_name: str, dest_dir: Path) -> Path:
+def list_dataset_files(dataset: str, api=None) -> list[tuple[str, int]]:
+    """Return [(file_name, size_bytes), ...] for every file in the dataset."""
+    api = api or _make_api()
+    files: list[tuple[str, int]] = []
+    token = None
+    try:
+        while True:
+            result = api.dataset_list_files(dataset, page_token=token, page_size=200)
+            if getattr(result, "error_message", None):
+                raise DownloadError(f"Kaggle: {result.error_message}")
+            files += [(f.name, int(getattr(f, "total_bytes", 0) or 0)) for f in (result.files or [])]
+            token = getattr(result, "next_page_token", None)
+            if not token:
+                break
+    except SystemExit:
+        raise DownloadError(f"Kaggle refused to list the files of {dataset}.") from None
+    except DownloadError:
+        raise
+    except Exception as exc:
+        raise DownloadError(f"Could not list the files of {dataset}: {exc}") from exc
+    if not files:
+        raise DownloadError(f"Kaggle dataset {dataset} has no files (or does not exist).")
+    return files
+
+
+def download_dataset_file(dataset: str, file_name: str, dest_dir: Path, api=None) -> Path:
     """Download `file_name` from `dataset` into `dest_dir` and return the local path."""
     dest_dir.mkdir(parents=True, exist_ok=True)
-    api = _make_api()
+    api = api or _make_api()
     log.info("Downloading %s from kaggle.com/datasets/%s into %s ...", file_name, dataset, dest_dir)
     try:
         api.dataset_download_file(dataset, file_name, path=str(dest_dir), force=True, quiet=False, unzip=True)

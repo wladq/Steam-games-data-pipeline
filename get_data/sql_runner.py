@@ -1,0 +1,163 @@
+"""Shared helpers for the SQL folders (model_data/, qa_data/).
+
+- common command-line flags, logging and connection, identical to the loader
+- split a .sql file into statements, keeping each statement's leading comments
+- execute raw SQL without any parameter parsing, so '%' and ':' are literal
+"""
+
+from __future__ import annotations
+
+import argparse
+import logging
+import re
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from sqlalchemy import Connection, Engine
+
+from .config import get_password, resolve_settings
+from .logging_setup import register_connection, setup_logging
+from .prompts import set_auto_yes
+
+log = logging.getLogger(__name__)
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+CONFIG_PATH = PROJECT_ROOT / "db_config.json"
+DEFAULT_LOG_DIR = PROJECT_ROOT / "logs"
+
+_DOLLAR_TAG = re.compile(r"\$[A-Za-z_]*\$")
+_META = re.compile(r"^([a-z_]+):\s*(.+)$")
+
+
+# --- command line and connection -------------------------------------------------
+
+def add_common_args(parser: argparse.ArgumentParser) -> None:
+    """The same connection and behaviour flags as `python -m get_data`."""
+    db = parser.add_argument_group("database (flag > saved config > prompt)")
+    db.add_argument("-U", "--user", help="database username")
+    db.add_argument("-d", "--database", help="database name")
+    db.add_argument("-H", "--host", help="database host (default: localhost)")
+    db.add_argument("-p", "--port", type=int, help="database port (default: 5433)")
+    run = parser.add_argument_group("behaviour")
+    run.add_argument("-y", "--yes", action="store_true", help="answer yes to every y/n question")
+    run.add_argument("-v", "--verbose", action="store_true", help="show debug messages on screen")
+    run.add_argument("--log-dir", type=Path, default=DEFAULT_LOG_DIR,
+                     help="folder for info.log and debug.log (default: logs/)")
+
+
+def start(args: argparse.Namespace) -> None:
+    """Set up logging, redaction and auto-yes from the parsed flags."""
+    setup_logging(args.verbose, args.log_dir)
+    register_connection(args.user, args.host, args.database)
+    set_auto_yes(args.yes)
+
+
+def open_engine(args: argparse.Namespace) -> Engine:
+    """Resolve the settings, ask for the password and test the connection."""
+    from .db import make_engine, test_connection  # pylint: disable=import-outside-toplevel
+
+    settings, _ = resolve_settings(args, CONFIG_PATH)
+    engine = make_engine(settings, get_password(settings))
+    try:
+        log.info("Connecting to %s ...", settings.describe())
+        log.info("Connected: %s", test_connection(engine))
+    except Exception:
+        engine.dispose()
+        raise
+    return engine
+
+
+# --- SQL files -------------------------------------------------------------------
+
+@dataclass
+class Statement:
+    """One SQL statement plus the comment lines written directly above it."""
+    sql: str
+    line: int
+    comments: list[str] = field(default_factory=list)
+
+    @property
+    def meta(self) -> dict[str, str]:
+        """'-- key: value' comment lines as a dict, e.g. {'check': ..., 'severity': ...}."""
+        found = {}
+        for comment in self.comments:
+            match = _META.match(comment)
+            if match:
+                found[match.group(1)] = match.group(2).strip()
+        return found
+
+    @property
+    def summary(self) -> str:
+        return re.sub(r"\s+", " ", self.sql)[:90]
+
+
+def split_statements(sql: str) -> list[Statement]:
+    """Split on ';' outside quotes, $$ blocks and -- comments.  /* */ comments are not supported."""
+    statements: list[Statement] = []
+    buf: list[str] = []
+    line, start_line = 1, 1
+    i, n = 0, len(sql)
+    in_quote, dollar = False, None
+
+    def emit() -> None:
+        text = "".join(buf).strip()
+        buf.clear()
+        comments, body = [], []
+        for raw in text.splitlines():
+            stripped = raw.strip()
+            if not body and stripped.startswith("--"):
+                comments.append(stripped[2:].strip())
+            elif not body and not stripped:
+                comments.clear()  # a blank line ends a file header or section title
+            else:
+                body.append(raw)
+        if body:
+            statements.append(Statement("\n".join(body).strip(), start_line, comments))
+
+    while i < n:
+        ch = sql[i]
+        if not buf and ch.isspace():
+            line += ch == "\n"
+            i += 1
+            continue
+        if not buf:
+            start_line = line
+        if dollar:
+            if sql.startswith(dollar, i):
+                buf.append(dollar)
+                i += len(dollar)
+                dollar = None
+                continue
+        elif in_quote:
+            in_quote = ch != "'"
+        elif ch == "'":
+            in_quote = True
+        elif sql.startswith("--", i):
+            end = sql.find("\n", i)
+            end = n if end == -1 else end
+            buf.append(sql[i:end])
+            i = end
+            continue
+        elif ch == "$" and (tag := _DOLLAR_TAG.match(sql, i)):
+            dollar = tag.group(0)
+            buf.append(dollar)
+            i += len(dollar)
+            continue
+        elif ch == ";":
+            emit()
+            i += 1
+            continue
+        line += ch == "\n"
+        buf.append(ch)
+        i += 1
+    emit()
+    return statements
+
+
+def read_statements(path: Path) -> list[Statement]:
+    return split_statements(path.read_text(encoding="utf-8"))
+
+
+def execute(conn: Connection, sql: str):
+    """Run raw SQL exactly as written: no bind parameters, so '%' and ':name' stay literal."""
+    return conn.execution_options(no_parameters=True).exec_driver_sql(sql)

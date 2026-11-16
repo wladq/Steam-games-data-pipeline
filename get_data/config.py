@@ -14,6 +14,7 @@ import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from .logging_setup import register_connection
 from .prompts import ask_text, ask_yes_no
 
 log = logging.getLogger(__name__)
@@ -64,6 +65,7 @@ def resolve_settings(args, config_path: Path) -> tuple[DbSettings, dict]:
     except (TypeError, ValueError):
         raise ValueError(f"Invalid port: {port!r}") from None
 
+    register_connection(username, host, database)  # keep them out of the log files
     return DbSettings(username=username, database=database, host=host, port=port), saved
 
 

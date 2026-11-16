@@ -1,15 +1,24 @@
-"""Command line entry point: argparse, logging, and the step-by-step run."""
+"""Command line entry point: argparse, logging, and the step-by-step run.
+
+Two data paths share the same prompts, flags and logging.  CSV is the default;
+JSON is used when the local file is a .json, when the Kaggle dataset has no CSV
+at all, or when --json asks for it.
+
+  CSV   games.csv  -> header fix -> tidy names -> sanity check -> games_raw
+  JSON  games.json -> sanity check + jsonb landing table games_json
+                   -> optional normalised tables (games, game_tags, ...)
+"""
 
 from __future__ import annotations
 
 import argparse
 import logging
-import sys
 from pathlib import Path
 
-from . import __version__
+from . import __version__, json_load
 from .config import get_password, offer_to_save, resolve_settings
-from .kaggle_download import clear_tmp, download_dataset_file, parse_dataset_ref
+from .kaggle_download import clear_tmp, download_dataset_file, list_dataset_files, parse_dataset_ref
+from .logging_setup import DEBUG_LOG, register_connection, setup_logging
 from .prompts import PromptError, ask_text, ask_yes_no, set_auto_yes
 from .transform import (GLUED_HEADER, SPLIT_HEADER, fix_shifted_header, header_is_shifted,
                         read_csv, read_header, sanity_check, tidy_column_names)
@@ -19,17 +28,19 @@ log = logging.getLogger("get_data")
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 TMP_DIR = PROJECT_ROOT / "tmp"
 CONFIG_PATH = PROJECT_ROOT / "db_config.json"
-DEFAULT_LOG = PROJECT_ROOT / "get_data.log"
+DEFAULT_LOG_DIR = PROJECT_ROOT / "logs"
 DEFAULT_DATASET = "fronkongames/steam-games-dataset"
-DEFAULT_FILE = "games.csv"
-DEFAULT_TABLE = "games_raw"
+PREFERRED_FILE = {"csv": "games.csv", "json": "games.json"}
+DEFAULT_TABLE = {"csv": "games_raw", "json": json_load.LANDING_TABLE}
 
 EPILOG = f"""\
 examples:
   python -m get_data                          ask for everything interactively
   python -m get_data -k {DEFAULT_DATASET} -U wlad -d steam
-  python -m get_data -c path/to/games.csv -y  local file, answer yes to every y/n
+  python -m get_data -c path/to/games.json -y local file (JSON by extension), yes to every y/n
+  python -m get_data --json                   take the dataset's JSON file instead of its CSV
   python -m get_data --dry-run                download and check only, no database
+  python -m get_data --normalise-only         rebuild the normalised tables from {DEFAULT_TABLE['json']}
 
 The password is never a flag. Set PGPASSWORD to skip the prompt.
 Connection settings can be saved to {CONFIG_PATH.name}; delete it to forget them.
@@ -49,16 +60,23 @@ def build_parser() -> argparse.ArgumentParser:
     one = src.add_mutually_exclusive_group()
     one.add_argument("-k", "--kaggle", metavar="OWNER/NAME",
                      help=f"Kaggle dataset as owner/name or URL, e.g. {DEFAULT_DATASET}")
-    one.add_argument("-c", "--csv", type=Path, help="use this local CSV instead of downloading")
-    src.add_argument("-f", "--file", default=DEFAULT_FILE,
-                     help=f"file to take from the Kaggle dataset (default: {DEFAULT_FILE})")
+    one.add_argument("-c", "--csv", "--local", dest="local_file", type=Path, metavar="FILE",
+                     help="use this local file instead of downloading (.json is loaded as JSON)")
+    src.add_argument("-f", "--file", help="exact file to take from the Kaggle dataset "
+                                          "(default: its CSV, or its JSON if it has no CSV)")
+    src.add_argument("-j", "--json", action="store_true",
+                     help="take the Kaggle dataset's JSON file even when it also has a CSV")
 
     db = p.add_argument_group("database (flag > saved config > prompt)")
     db.add_argument("-U", "--user", help="database username")
     db.add_argument("-d", "--database", help="database name")
     db.add_argument("-H", "--host", help="database host (default: localhost)")
     db.add_argument("-p", "--port", type=int, help="database port (default: 5433)")
-    db.add_argument("--table", default=DEFAULT_TABLE, help=f"target table (default: {DEFAULT_TABLE})")
+    db.add_argument("--table", help=f"target table (default: {DEFAULT_TABLE['csv']} for CSV, "
+                                    f"landing table {DEFAULT_TABLE['json']} for JSON)")
+    db.add_argument("--normalise-only", action="store_true",
+                    help="skip download and loading; rebuild the normalised tables from the "
+                         "existing JSON landing table")
 
     run = p.add_argument_group("behaviour")
     run.add_argument("-y", "--yes", action="store_true",
@@ -66,72 +84,114 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--dry-run", action="store_true",
                      help="get, fix and check the data, but do not touch the database")
     run.add_argument("-v", "--verbose", action="store_true", help="show debug messages on screen")
-    run.add_argument("--log-file", type=Path, default=DEFAULT_LOG,
-                     help=f"debug log file (default: {DEFAULT_LOG.name}, git-ignored)")
+    run.add_argument("--log-dir", type=Path, default=DEFAULT_LOG_DIR,
+                     help=f"folder for info.log and debug.log, both anonymised "
+                          f"(default: {DEFAULT_LOG_DIR.name}/, git-ignored)")
     p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     return p
 
 
-class _ConsoleFormatter(logging.Formatter):
-    """Plain messages for INFO, a level prefix for everything else."""
+# --- data source ---------------------------------------------------------------
 
-    def format(self, record: logging.LogRecord) -> str:
-        msg = super().format(record)
-        return msg if record.levelno == logging.INFO else f"{record.levelname}: {msg}"
-
-
-def setup_logging(verbose: bool, log_file: Path | None) -> None:
-    root = logging.getLogger()
-    root.setLevel(logging.DEBUG)
-    for h in list(root.handlers):
-        root.removeHandler(h)
-
-    console = logging.StreamHandler(sys.stdout)
-    console.setLevel(logging.DEBUG if verbose else logging.INFO)
-    console.setFormatter(_ConsoleFormatter("%(message)s"))
-    root.addHandler(console)
-
-    if log_file:
-        log_file.parent.mkdir(parents=True, exist_ok=True)
-        fh = logging.FileHandler(log_file, encoding="utf-8")
-        fh.setLevel(logging.DEBUG)
-        fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)-8s %(name)s: %(message)s"))
-        root.addHandler(fh)
-
-    for noisy in ("urllib3", "requests", "kagglesdk", "sqlalchemy.engine"):
-        logging.getLogger(noisy).setLevel(logging.WARNING)
-
-
-# --- steps -------------------------------------------------------------------
-
-def step_get_csv(args) -> Path:
-    """Resolve the data source to a local CSV path, downloading into tmp/ if needed."""
-    if args.csv:
-        csv_path = args.csv
+def step_get_file(args) -> Path:
+    """Resolve the data source to a local file, downloading into tmp/ if needed."""
+    if args.local_file:
+        path = args.local_file
     elif args.kaggle:
-        csv_path = _from_kaggle(parse_dataset_ref(args.kaggle), args.file)
+        path = _from_kaggle(parse_dataset_ref(args.kaggle), args)
     else:
-        answer = ask_text("Kaggle dataset (owner/name or URL) or path to a local CSV",
-                          default=DEFAULT_DATASET, flag_hint="--kaggle or --csv")
+        answer = ask_text("Kaggle dataset (owner/name or URL) or path to a local CSV/JSON file",
+                          default=DEFAULT_DATASET, flag_hint="--kaggle or --local")
         answer = answer.strip().strip('"').strip("'")
-        if answer.lower().endswith(".csv") or Path(answer).is_file():
-            csv_path = Path(answer)
+        if answer.lower().endswith((".csv", ".json")) or Path(answer).is_file():
+            path = Path(answer)
         else:
-            csv_path = _from_kaggle(parse_dataset_ref(answer), args.file)
+            path = _from_kaggle(parse_dataset_ref(answer), args)
 
-    if not csv_path.is_file():
-        raise FileNotFoundError(f"CSV not found: {csv_path}")
-    log.info("Using %s", csv_path)
-    return csv_path
+    if not path.is_file():
+        raise FileNotFoundError(f"File not found: {path}")
+    log.info("Using %s (%.1f MB)", path, path.stat().st_size / 1e6)
+    return path
 
 
-def _from_kaggle(dataset: str, file_name: str) -> Path:
+def _choose_kaggle_file(files: list[tuple[str, int]], args) -> str:
+    """Pick the dataset file to download: --file, else its CSV, else its JSON (or JSON with --json)."""
+    names = [n for n, _ in files]
+    listing = ", ".join(f"{n} ({b / 1e6:.0f} MB)" for n, b in files)
+    log.info("Dataset files: %s", listing)
+    if args.file:
+        if args.file not in names:
+            raise FileNotFoundError(f"{args.file} is not in the dataset. Available: {', '.join(names)}")
+        return args.file
+
+    by_fmt = {fmt: [n for n in names if n.lower().endswith("." + fmt)] for fmt in ("csv", "json")}
+    if args.json:
+        fmt = "json"
+        if not by_fmt[fmt]:
+            raise FileNotFoundError(f"--json given, but the dataset has no JSON file. Available: {', '.join(names)}")
+    elif by_fmt["csv"]:
+        fmt = "csv"
+    elif by_fmt["json"]:
+        fmt = "json"
+        log.info("The dataset has no CSV file; using its JSON file")
+    else:
+        raise FileNotFoundError(f"The dataset has neither a CSV nor a JSON file. Available: {', '.join(names)}")
+
+    candidates = by_fmt[fmt]
+    if PREFERRED_FILE[fmt] in candidates or len(candidates) == 1:
+        return PREFERRED_FILE[fmt] if PREFERRED_FILE[fmt] in candidates else candidates[0]
+    return ask_text(f"Several {fmt.upper()} files; which one? ({', '.join(candidates)})",
+                    default=candidates[0], flag_hint="--file")
+
+
+def _from_kaggle(dataset: str, args) -> Path:
+    from .kaggle_download import _make_api  # one authenticated client for listing and download
+
+    api = _make_api()
+    file_name = _choose_kaggle_file(list_dataset_files(dataset, api), args)
     target = TMP_DIR / file_name
     if target.is_file() and ask_yes_no(
             f"{target.relative_to(PROJECT_ROOT)} is left over from an earlier run. Reuse it instead of downloading?"):
         return target
-    return download_dataset_file(dataset, file_name, TMP_DIR)
+    return download_dataset_file(dataset, file_name, TMP_DIR, api)
 
+
+def data_format(path: Path) -> str:
+    return "json" if path.suffix.lower() == ".json" else "csv"
+
+
+# --- shared steps --------------------------------------------------------------
+
+def connect(args):
+    """Resolve settings, ask for the password, test the connection.  Caller disposes the engine."""
+    from .db import make_engine, test_connection
+
+    settings, saved = resolve_settings(args, CONFIG_PATH)
+    engine = make_engine(settings, get_password(settings))
+    try:
+        log.info("Connecting to %s ...", settings.describe())
+        log.info("Connected: %s", test_connection(engine))
+        offer_to_save(settings, saved, CONFIG_PATH)
+    except Exception:
+        engine.dispose()
+        raise
+    return engine
+
+
+def step_cleanup(used: Path | None) -> None:
+    """Offer to clear tmp/ only when this run worked from a file inside it."""
+    if used is None or not used.resolve().is_relative_to(TMP_DIR.resolve()):
+        return
+    if not TMP_DIR.is_dir() or not any(TMP_DIR.iterdir()):
+        return
+    size_mb = sum(f.stat().st_size for f in TMP_DIR.rglob("*") if f.is_file()) / 1e6
+    if ask_yes_no(f"Delete the downloaded files in tmp/ ({size_mb:.1f} MB)?"):
+        clear_tmp(TMP_DIR, PROJECT_ROOT)
+    else:
+        log.info("Kept tmp/ (it is git-ignored and will be offered for reuse next run)")
+
+
+# --- CSV steps -----------------------------------------------------------------
 
 def step_fix_header(csv_path: Path):
     """Read the CSV, offering to repair the shifted 'DiscountDLC count' header first."""
@@ -185,53 +245,91 @@ def step_sanity_check(df) -> str:
     return summary["appid_column"]
 
 
-def step_upload(df, pk_column: str, args) -> None:
-    from .db import make_engine, test_connection, upload_with_primary_key  # needs sqlalchemy
+def run_csv(args, csv_path: Path, table: str) -> None:
+    from .db import upload_with_primary_key
 
-    settings, saved = resolve_settings(args, CONFIG_PATH)
-    engine = make_engine(settings, get_password(settings))
-    try:
-        log.info("Connecting to %s ...", settings.describe())
-        log.info("Connected: %s", test_connection(engine))
-        offer_to_save(settings, saved, CONFIG_PATH)
-        upload_with_primary_key(df, engine, args.table, pk_column)
-    finally:
-        engine.dispose()
-
-
-def step_cleanup() -> None:
-    if not TMP_DIR.is_dir() or not any(TMP_DIR.iterdir()):
-        return
-    size_mb = sum(f.stat().st_size for f in TMP_DIR.rglob("*") if f.is_file()) / 1e6
-    if ask_yes_no(f"Delete the downloaded files in tmp/ ({size_mb:.1f} MB)?"):
-        clear_tmp(TMP_DIR, PROJECT_ROOT)
-    else:
-        log.info("Kept tmp/ (it is git-ignored and will be offered for reuse next run)")
-
-
-# --- main --------------------------------------------------------------------
-
-def run(args) -> None:
-    csv_path = step_get_csv(args)
     df = step_fix_header(csv_path)
     df = step_tidy_columns(df)
     pk_column = step_sanity_check(df)
     if args.dry_run:
         log.info("Dry run: skipping the database upload")
         return
-    step_upload(df, pk_column, args)
+    engine = connect(args)
+    try:
+        upload_with_primary_key(df, engine, table, pk_column)
+    finally:
+        engine.dispose()
+
+
+# --- JSON steps ----------------------------------------------------------------
+
+def step_normalise(engine, landing_table: str) -> None:
+    names = ", ".join(json_load.NORMALISED_TABLES)
+    if not ask_yes_no(f"Build the normalised tables ({names}) from {landing_table}? "
+                      "Existing tables with these names are replaced."):
+        log.info("Normalised tables not built. Rerun with --normalise-only to build them later")
+        return
+    json_load.normalise(engine, landing_table)
+
+
+def run_json(args, json_path: Path, table: str) -> None:
+    if args.dry_run:
+        inv = json_load.scan(json_path)
+        inv.log_summary()
+        log.info("Dry run: skipping the database upload")
+        return
+
+    engine = connect(args)
+    try:
+        # sanity check and landing load happen in one pass; any failure rolls everything back
+        inv = json_load.load_landing(json_path, engine, table)
+        inv.log_summary()
+        step_normalise(engine, table)
+    finally:
+        engine.dispose()
+
+
+def run_normalise_only(args) -> None:
+    table = args.table or DEFAULT_TABLE["json"]
+    if args.dry_run:
+        log.info("Dry run with --normalise-only: nothing to do")
+        return
+    engine = connect(args)
+    try:
+        step_normalise(engine, table)
+    finally:
+        engine.dispose()
+
+
+# --- main --------------------------------------------------------------------
+
+def run(args, state: dict) -> None:
+    if args.normalise_only:
+        run_normalise_only(args)
+        return
+
+    path = step_get_file(args)
+    state["used"] = path  # cleanup looks at this, even if a later step fails
+    fmt = data_format(path)
+    table = args.table or DEFAULT_TABLE[fmt]
+    log.info("Format: %s -> table %s", fmt.upper(), table)
+    if fmt == "json":
+        run_json(args, path, table)
+    else:
+        run_csv(args, path, table)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    setup_logging(args.verbose, args.log_file)
+    setup_logging(args.verbose, args.log_dir)
+    register_connection(args.user, args.host, args.database)
     set_auto_yes(args.yes)
-    log.debug("get_data %s started with %s", __version__,
-              {k: v for k, v in vars(args).items()})
+    log.debug("get_data %s started with %s", __version__, vars(args))
 
+    state: dict = {"used": None}
     exit_code = 0
     try:
-        run(args)
+        run(args, state)
         log.info("Done")
     except KeyboardInterrupt:
         log.error("Interrupted")
@@ -239,12 +337,12 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         log.error("%s", exc)
         log.debug("Traceback:", exc_info=True)
-        if args.log_file:
-            log.info("Details in %s", args.log_file)
+        if args.log_dir:
+            log.info("Details in %s", args.log_dir / DEBUG_LOG)
         exit_code = 1
 
     try:
-        step_cleanup()
+        step_cleanup(state["used"])
     except (PromptError, KeyboardInterrupt):
         pass
     return exit_code
