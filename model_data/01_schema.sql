@@ -32,6 +32,8 @@ $$;
 -- sometimes with leftovers of Steam markup inside ([b], <strong>, &amp;), with HTML
 -- escaping stacked several times ('English&amp;amp;amp;lt;strong&amp;amp;amp;gt;'),
 -- and with line breaks or semicolons instead of commas ('English\r\nRussian', 'German;').
+-- Steam's untranslated placeholder '#lang_slovakian' becomes 'Slovak', the name every
+-- other game uses.
 -- Returns one clean language name per row.
 CREATE FUNCTION core.split_languages(list_text text) RETURNS SETOF text
 LANGUAGE sql IMMUTABLE AS $$
@@ -42,7 +44,7 @@ LANGUAGE sql IMMUTABLE AS $$
                                    '&lt;', '<'), '&gt;', '>'),
                    '&#?[a-z0-9]+;', ' ', 'gi') AS txt
     )
-    SELECT DISTINCT c.lang
+    SELECT DISTINCT CASE c.lang WHEN 'lang_slovakian' THEN 'Slovak' ELSE c.lang END
     FROM decoded
     CROSS JOIN LATERAL regexp_split_to_table(btrim(decoded.txt, '[]'), ',|;|(\\[rn])+|<br\s*/?>', 'i') AS p(part)
     CROSS JOIN LATERAL (

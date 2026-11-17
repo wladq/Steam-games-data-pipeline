@@ -112,9 +112,10 @@ downloaded in November 2026.
    line breaks or semicolons instead of commas (`English\r\nRussian`, `German;`), which left
    14 broken language names. Splitting `Name,Inc.` at the comma produced 13 developers that
    are only a suffix, such as `inc.` with 42 games. After fixing both cleaning functions the
-   checks report 1 suffix developer (`LIMITED`) and 4 odd language names, such as the
-   Steam key `lang_slovakian` and the real language `K'iche`, which the check flags for its
-   apostrophe. The same checks guard against the bugs coming back.
+   checks report 1 suffix developer (`LIMITED`) and a couple of odd language names taken
+   from the source as written, such as `Japanese (all with full audio support)`. Steam's
+   placeholder `#lang_slovakian` is mapped to `Slovak`. The same checks guard against the
+   bugs coming back.
 
 ### How quality is checked
 
@@ -188,5 +189,6 @@ get_data/        loader package: prompts, config, Kaggle download, CSV and JSON 
 model_data/      SQL that builds the core schema, and build.py to run it
 qa_data/         SQL constraints and checks, and run_qa.py to run them
 analyse_data/    basic_check.py: sample rows and basic statistics of a table
+tests/           check_cleaning.py: offline check of the SQL files and the cleaning patterns
 load_db.py       entry point for the loader
 ```

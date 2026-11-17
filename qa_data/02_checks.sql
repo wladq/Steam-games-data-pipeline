@@ -203,8 +203,9 @@ GROUP BY d.developer_id, d.name;
 -- check: language_name_suspicious
 -- severity: warn
 -- about: language names that still contain markup, digits or are very long
+-- (letters, spaces, brackets, hyphens and apostrophes are fine: 'Spanish - Spain', 'K''iche')
 SELECT l.language_id, l.name, count(gl.appid) AS games
 FROM core.languages AS l
 LEFT JOIN core.game_languages AS gl ON gl.language_id = l.language_id
-WHERE l.name !~ '^[A-Za-z][A-Za-z ()-]*$' OR length(l.name) > 30
+WHERE l.name !~ '^[A-Za-z][A-Za-z ()''-]*$' OR length(l.name) > 30
 GROUP BY l.language_id, l.name;
