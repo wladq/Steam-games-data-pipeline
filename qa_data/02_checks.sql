@@ -52,7 +52,7 @@ WHERE g.name IS NULL
 
 -- check: game_name_missing
 -- severity: warn
--- about: games without a name
+-- about: games without a name (a warning, not a constraint: the source has one such game)
 SELECT appid FROM core.games WHERE name IS NULL;
 
 -- check: release_date_not_parsed
@@ -185,7 +185,7 @@ HAVING count(*) > 1;
 
 -- check: developer_names_differ_only_by_case
 -- severity: warn
--- about: developers that are the same name in different capitalisation
+-- about: developers that are the same name in different capitalisation (the model merges them)
 SELECT lower(name) AS developer, count(*) AS variants, string_agg(name, ' | ') AS names
 FROM core.developers
 GROUP BY lower(name)

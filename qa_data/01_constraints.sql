@@ -14,13 +14,11 @@
 -- price.  Missing values are counted separately in 02_checks.sql.
 -- Rules that depend on today's date or on other tables cannot be CHECK
 -- constraints; those are queries in 02_checks.sql too.
+-- A rule that the source data itself breaks is a warning in 02_checks.sql, not a
+-- constraint here.  Example: one game has no name in either Kaggle file, and a
+-- name constraint would make every run fail, so the failure would say nothing.
 
 -- --- core.games ------------------------------------------------------------------
-
-ALTER TABLE core.games DROP CONSTRAINT IF EXISTS ck_games_name_present;
-ALTER TABLE core.games ADD CONSTRAINT ck_games_name_present
-    CHECK (name IS NOT NULL AND btrim(name) <> '') NOT VALID;
-ALTER TABLE core.games VALIDATE CONSTRAINT ck_games_name_present;
 
 ALTER TABLE core.games DROP CONSTRAINT IF EXISTS ck_games_price_not_negative;
 ALTER TABLE core.games ADD CONSTRAINT ck_games_price_not_negative

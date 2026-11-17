@@ -29,20 +29,45 @@ END
 $$;
 
 -- The CSV stores languages as the text of a Python list, e.g. ['English', 'French'],
--- sometimes with leftovers of Steam markup inside ([b], <br>, &amp;, \r\n).
+-- sometimes with leftovers of Steam markup inside ([b], <strong>, &amp;), with HTML
+-- escaping stacked several times ('English&amp;amp;amp;lt;strong&amp;amp;amp;gt;'),
+-- and with line breaks or semicolons instead of commas ('English\r\nRussian', 'German;').
 -- Returns one clean language name per row.
 CREATE FUNCTION core.split_languages(list_text text) RETURNS SETOF text
 LANGUAGE sql IMMUTABLE AS $$
+    WITH decoded AS (
+        -- undo the escaping before splitting, because every entity ends in ';'
+        SELECT regexp_replace(
+                   replace(replace(regexp_replace(list_text, '&(amp;)+', '&', 'g'),
+                                   '&lt;', '<'), '&gt;', '>'),
+                   '&#?[a-z0-9]+;', ' ', 'gi') AS txt
+    )
     SELECT DISTINCT c.lang
-    FROM regexp_split_to_table(btrim(list_text, '[]'), ',') AS p(part)
+    FROM decoded
+    CROSS JOIN LATERAL regexp_split_to_table(btrim(decoded.txt, '[]'), ',|;|(\\[rn])+|<br\s*/?>', 'i') AS p(part)
     CROSS JOIN LATERAL (
         SELECT btrim(
                    regexp_replace(
-                       regexp_replace(p.part, '\\[rnt]|<[^>]*>|\[/?[a-z]+\]|&[a-z]+;|[*#]', ' ', 'gi'),
+                       regexp_replace(p.part, '\\[rnt]|<[^>]*>|\[/?[a-z]+\]|[*#]', ' ', 'gi'),
                        '\s+', ' ', 'g'),
-                   ' ''"') AS lang
+                   ' ''".') AS lang
     ) AS c
     WHERE c.lang <> ''
+$$;
+
+-- The CSV joins developer names with a bare comma, while a comma inside a company
+-- name is followed by a space ('CAPCOM Co., Ltd.').  Split only on commas that are
+-- followed neither by a space nor by a company suffix ('Name,Inc.'), then write the
+-- commas that were kept the usual way: 'Name,Inc.' -> 'Name, Inc.'.
+-- ord = place in the source list (1 = first).
+CREATE FUNCTION core.split_developers(list_text text) RETURNS TABLE (developer text, ord bigint)
+LANGUAGE sql IMMUTABLE AS $$
+    SELECT regexp_replace(btrim(d.part), ',(?=\S)', ', ', 'g'), d.ord
+    FROM unnest(regexp_split_to_array(
+             list_text,
+             ',(?! )(?!(inc|incorporated|ltd|limited|llc|l\.l\.c|co|corp|corporation|gmbh|s\.a|s\.r\.o|srl|pty|plc)\.?(,|$))',
+             'i')) WITH ORDINALITY AS d(part, ord)
+    WHERE btrim(d.part) <> ''
 $$;
 
 
@@ -108,8 +133,11 @@ CREATE TABLE core.game_genres (
 
 CREATE TABLE core.developers (
     developer_id  integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    name          text NOT NULL UNIQUE
+    name          text NOT NULL
 );
+
+-- one row per name whatever the capitalisation; 02_populate.sql keeps the most common spelling
+CREATE UNIQUE INDEX developers_name_lower_key ON core.developers (lower(name));
 
 CREATE TABLE core.game_developers (
     appid         bigint  NOT NULL REFERENCES core.games (appid) ON DELETE CASCADE,

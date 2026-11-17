@@ -64,25 +64,29 @@ from the CSV landing table by plain SQL files, in one transaction.
 | `core.game_languages` | game and language | `full_audio` says whether the language is also dubbed |
 
 The lists are split in SQL. Tags and genres use `unnest(string_to_array(tags, ','))`.
-Developers use a regular expression that only splits on commas not followed by a space, so
-`CAPCOM Co., Ltd.` stays one company. Languages arrive as the text of a Python list with
-markup leftovers and get their own cleaning function.
+Developers get a split function that only splits on commas followed neither by a space nor
+by a company suffix, so `CAPCOM Co., Ltd.` and `Name,Inc.` each stay one company. Spellings
+that differ only in capitalisation (`1UP games`, `1UP Games`) become one developer under the
+most common spelling. Languages arrive as the text of a Python list with markup leftovers
+and get their own cleaning function.
 
 The JSON load builds a second, richer set of tables in `public` (`games`, `game_tags` with
 vote counts, `game_packages` with prices per edition). They are independent of `core`.
 
 ## The data-quality story
 
-Numbers in this section come from the load logs of the snapshot downloaded in November 2026.
+Numbers in this section come from the load logs and the first QA run on the snapshot
+downloaded in November 2026.
 
 1. **The CSV header is broken.** Two column names are glued together as `DiscountDLC count`,
    so the file has 39 names for 40 columns and every column after that point is shifted by
    one. The loader detects the glued name, splits it, and then proves the repair worked:
    every `discount` must be a number from 0 to 100, which fails immediately if columns are
    still shifted. Result: 125,855 rows, 40 columns, every appid numeric and unique.
-2. **The two files on the same Kaggle page are different snapshots.** The CSV holds 125,855
-   games, the JSON 148,909. They cannot be mixed freely. A check lists the CSV games that
-   the JSON does not know.
+2. **The two files on the same Kaggle page do not match.** The CSV holds 125,855 games, the
+   JSON 148,909. Every CSV game is also in the JSON, so the CSV is a smaller subset, and the
+   core model, built from the CSV, lacks 23,054 games. A check keeps watching for CSV games
+   that the JSON does not know.
 3. **The CSV loses information.** It is generated from the JSON by joining lists with
    commas. Tag vote counts and per-edition prices are dropped, and a company name with a
    comma in it becomes two developers. The JSON load keeps everything. The CSV model works
@@ -97,11 +101,20 @@ Numbers in this section come from the load logs of the snapshot downloaded in No
    stores NULL. Owner counts are text ranges such as `20000 - 50000`, stored as two numbers.
    Release dates are text in two formats, `Oct 21, 2008` and `Oct 2008`. Unparseable dates
    become NULL and the raw text is kept next to them.
-7. **The CSV reader can erase real names.** pandas treats words such as `None`, `NA` and
-   `null` as missing values, so a game with such a name loads as NULL. A check compares the
-   CSV load with the JSON load to find these cases.
+7. **The CSV reader could erase real names.** pandas treats words such as `None`, `NA` and
+   `null` as missing values, so a game with such a name would load as NULL. A check
+   compares the CSV load with the JSON load: in this snapshot no name was lost. The one
+   game without a name (appid 396420) has no name in the JSON either.
 8. **PostgreSQL cannot store NUL characters.** The JSON loader strips them and reports the
    count. This snapshot contained none.
+9. **The first QA run caught two bugs in the model's own cleaning.** Some language lists
+   are HTML-escaped several times over (`English&amp;amp;amp;amp;lt;strong…`), and some use
+   line breaks or semicolons instead of commas (`English\r\nRussian`, `German;`), which left
+   14 broken language names. Splitting `Name,Inc.` at the comma produced 13 developers that
+   are only a suffix, such as `inc.` with 42 games. After fixing both cleaning functions the
+   checks report 1 suffix developer (`LIMITED`) and 4 odd language names, such as the
+   Steam key `lang_slovakian` and the real language `K'iche`, which the check flags for its
+   apostrophe. The same checks guard against the bugs coming back.
 
 ### How quality is checked
 
@@ -114,7 +127,9 @@ The same question, "is this data right?", is answered at three points.
 | In the database, on demand | `qa_data/02_checks.sql`: 27 queries that return the rows breaking a rule | counting problems instead of refusing them, rules across tables, rules that depend on today's date |
 
 Constraints are added as `NOT VALID` and then validated. A rule that existing rows break is
-reported as a finding, and it still protects every future write. Each check has a severity:
+reported as a finding, and it still protects every future write. A rule that the source data
+itself breaks is a warning check instead of a constraint: the one game without a name would
+otherwise fail every run, and a run that always fails says nothing. Each check has a severity:
 `error` fails the run, `warn` is only reported. `python qa_data/run_qa.py` prints one line
 per constraint and per check and exits with code 1 if anything of severity `error` is wrong.
 
@@ -122,15 +137,19 @@ per constraint and per check and exits with code 1 if anything of severity `erro
 
 - **Owner counts are estimates.** `estimated_owners` comes from SteamSpy, not from Valve. It
   is published as a wide range, and the model keeps both edges as `owners_min` and
-  `owners_max`. Do not read the midpoint as a sales figure. The checks show games that have
-  reviews but sit in the `0 - 0` range.
+  `owners_max`. Do not read the midpoint as a sales figure. The checks find 11 games with
+  more reviews than the upper edge of their range allows, for example Call of Duty®: Black
+  Ops III with 62,347 reviews in the `0 - 20000` range.
 - **The data is a snapshot.** Prices, discounts, peak concurrent users and two-week playtime
   are the values on the day of scraping. There is no history, so nothing here can show a
-  trend over time, and a rebuild from a newer download can change every number.
+  trend over time, and a rebuild from a newer download can change every number. 39 games
+  show a price of 0 together with a discount, mostly 100 %: they were scraped while
+  temporarily free.
 - **Popular games are over-represented in reviews.** Review counts are extremely skewed: a
   small number of hits collect most of the reviews, so any statistic weighted by reviews
   mostly describes blockbusters. Tags behave the same way, because a game only gets tags
-  once enough players vote: 65,519 of the 148,909 games in the JSON have none. Compare
+  once enough players vote: 65,519 of the 148,909 games in the JSON have none, and 42,502 of
+  the 125,855 in the core model. Compare
   medians or group games by size before drawing conclusions. This query measures the skew:
 
   ```sql
@@ -145,8 +164,11 @@ per constraint and per check and exits with code 1 if anything of severity `erro
   ```
 
 - **The core model is built from the CSV**, so it has the smaller snapshot and no tag votes.
+- **Lists can be empty in the source.** 8,449 games have no developer, 8,423 no genre and
+  8,391 no language. The samples are mostly editors, dedicated servers and older titles.
 - **Developer splitting is a heuristic.** A name with a comma and no space after it is still
-  split in two. `qa_data` reports the leftovers.
+  split in two unless a company suffix follows, and merging by capitalisation assumes that
+  `1UP games` and `1UP Games` are the same company. `qa_data` reports the leftovers.
 - **Dates given as month and year** are stored as the first day of that month.
 - **Log anonymisation is pattern based.** It is a safety net, not a guarantee.
 

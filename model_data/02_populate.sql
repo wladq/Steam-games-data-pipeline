@@ -76,24 +76,29 @@ GROUP BY r.appid, gn.genre_id;
 
 
 -- --- developers ------------------------------------------------------------------
--- The CSV joins names with a bare comma, while a comma inside a company name is
--- followed by a space ('CAPCOM Co., Ltd.').  Splitting only on commas that are NOT
--- followed by a space keeps such names whole.  It is a heuristic: qa_data reports
--- the fragments that still slip through.
+-- core.split_developers keeps company names whole (see 01_schema.sql).  It is a
+-- heuristic: qa_data reports the fragments that still slip through.  Spellings that
+-- differ only in capitalisation ('1UP games', '1UP Games') become one developer,
+-- named by the spelling used by the most games.
+
+CREATE TEMP TABLE developer_mentions AS
+SELECT r.appid, d.developer, d.ord
+FROM public.games_raw AS r
+CROSS JOIN LATERAL core.split_developers(r.developers) AS d;
 
 INSERT INTO core.developers (name)
-SELECT DISTINCT btrim(d.developer)
-FROM public.games_raw AS r
-CROSS JOIN LATERAL unnest(regexp_split_to_array(r.developers, ',(?! )')) AS d(developer)
-WHERE btrim(d.developer) <> ''
-ORDER BY 1;
+SELECT DISTINCT ON (lower(developer)) developer
+FROM developer_mentions
+GROUP BY developer
+ORDER BY lower(developer), count(*) DESC, developer;
 
 INSERT INTO core.game_developers (appid, developer_id, position)
-SELECT r.appid, dv.developer_id, min(d.ord)::integer
-FROM public.games_raw AS r
-CROSS JOIN LATERAL unnest(regexp_split_to_array(r.developers, ',(?! )')) WITH ORDINALITY AS d(developer, ord)
-JOIN core.developers AS dv ON dv.name = btrim(d.developer)
-GROUP BY r.appid, dv.developer_id;
+SELECT m.appid, dv.developer_id, min(m.ord)::integer
+FROM developer_mentions AS m
+JOIN core.developers AS dv ON lower(dv.name) = lower(m.developer)
+GROUP BY m.appid, dv.developer_id;
+
+DROP TABLE developer_mentions;
 
 
 -- --- languages: interface/subtitle list plus the full-audio list ------------------
