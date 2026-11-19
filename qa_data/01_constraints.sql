@@ -15,8 +15,9 @@
 -- Rules that depend on today's date or on other tables cannot be CHECK
 -- constraints; those are queries in 02_checks.sql too.
 -- A rule that the source data itself breaks is a warning in 02_checks.sql, not a
--- constraint here.  Example: one game has no name in either Kaggle file, and a
--- name constraint would make every run fail, so the failure would say nothing.
+-- constraint here.  Examples: one game has no name in either Kaggle file, and 9 games
+-- list none of Windows, Mac and Linux.  A constraint for either rule would make every
+-- run fail, so the failure would say nothing.
 
 -- --- core.games ------------------------------------------------------------------
 
@@ -61,11 +62,6 @@ ALTER TABLE core.games ADD CONSTRAINT ck_games_required_age_range
     CHECK (required_age BETWEEN 0 AND 21) NOT VALID;
 ALTER TABLE core.games VALIDATE CONSTRAINT ck_games_required_age_range;
 
-ALTER TABLE core.games DROP CONSTRAINT IF EXISTS ck_games_has_platform;
-ALTER TABLE core.games ADD CONSTRAINT ck_games_has_platform
-    CHECK (windows OR mac OR linux) NOT VALID;
-ALTER TABLE core.games VALIDATE CONSTRAINT ck_games_has_platform;
-
 -- --- lookup tables: names are trimmed and not empty --------------------------------
 
 ALTER TABLE core.tags DROP CONSTRAINT IF EXISTS ck_tags_name_clean;
@@ -94,3 +90,8 @@ ALTER TABLE core.game_tags DROP CONSTRAINT IF EXISTS ck_game_tags_position_posit
 ALTER TABLE core.game_tags ADD CONSTRAINT ck_game_tags_position_positive
     CHECK (position >= 1) NOT VALID;
 ALTER TABLE core.game_tags VALIDATE CONSTRAINT ck_game_tags_position_positive;
+
+ALTER TABLE core.game_tags DROP CONSTRAINT IF EXISTS ck_game_tags_votes_not_negative;
+ALTER TABLE core.game_tags ADD CONSTRAINT ck_game_tags_votes_not_negative
+    CHECK (votes >= 0) NOT VALID;
+ALTER TABLE core.game_tags VALIDATE CONSTRAINT ck_game_tags_votes_not_negative;

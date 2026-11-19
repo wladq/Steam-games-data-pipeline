@@ -1,7 +1,7 @@
 -- Normalised model of the Steam games dataset, in its own schema: core.
 --
--- Source : public.games_raw, the CSV landing table loaded by `python main.py get`
---          (column names tidied to snake_case).
+-- Source : public.games_json, the jsonb landing table loaded by `python main.py get json`
+--          (one row per game: appid, data).
 -- Run    : python main.py model   (or python model_data/build.py)
 --          or  psql -1 -v ON_ERROR_STOP=1 -f 01_schema.sql -f 02_populate.sql
 -- Safe to re-run: the whole schema is dropped and rebuilt in one transaction.
@@ -12,10 +12,46 @@
 DROP SCHEMA IF EXISTS core CASCADE;
 CREATE SCHEMA core;
 
-COMMENT ON SCHEMA core IS 'Normalised Steam games model, rebuilt from public.games_raw by model_data/';
+COMMENT ON SCHEMA core IS 'Normalised Steam games model, rebuilt from public.games_json by model_data/';
 
 
--- --- helpers ---------------------------------------------------------------------
+-- --- helpers: reading JSON values ------------------------------------------------
+-- The same key can hold different JSON types from game to game: discount is a string
+-- in some games and a number in others, tags an object or an empty array.  These
+-- helpers turn every shape into one SQL type, or NULL / empty when it does not fit.
+
+-- numbers as they are, numeric strings ('50') converted, anything else NULL
+CREATE FUNCTION core.jnum(j jsonb) RETURNS numeric
+LANGUAGE sql IMMUTABLE AS $$
+    SELECT CASE
+        WHEN jsonb_typeof(j) = 'number' THEN (j #>> '{}')::numeric
+        WHEN jsonb_typeof(j) = 'string' AND (j #>> '{}') ~ '^\s*-?[0-9]+(\.[0-9]+)?\s*$'
+            THEN btrim(j #>> '{}')::numeric
+    END
+$$;
+
+-- booleans as they are, the strings 'true' / 'false' converted, anything else NULL
+CREATE FUNCTION core.jbool(j jsonb) RETURNS boolean
+LANGUAGE sql IMMUTABLE AS $$
+    SELECT CASE
+        WHEN jsonb_typeof(j) = 'boolean' THEN (j #>> '{}')::boolean
+        WHEN lower(j #>> '{}') IN ('true', 'false') THEN (j #>> '{}')::boolean
+    END
+$$;
+
+-- a list field as a jsonb array: arrays as they are, a lone string as a one-element
+-- array (older scrapes store languages as one comma-separated string), else empty
+CREATE FUNCTION core.jlist(j jsonb) RETURNS jsonb
+LANGUAGE sql IMMUTABLE AS $$
+    SELECT CASE jsonb_typeof(j)
+        WHEN 'array' THEN j
+        WHEN 'string' THEN jsonb_build_array(j)
+        ELSE '[]'::jsonb
+    END
+$$;
+
+
+-- --- helpers: dates and languages --------------------------------------------------
 
 -- to_date() raises on impossible dates; a failed parse should give NULL instead,
 -- so that one bad row cannot abort the build.  The raw text is kept beside the date.
@@ -28,25 +64,34 @@ EXCEPTION WHEN others THEN
 END
 $$;
 
--- The CSV stores languages as the text of a Python list, e.g. ['English', 'French'],
--- sometimes with leftovers of Steam markup inside ([b], <strong>, &amp;), with HTML
--- escaping stacked several times ('English&amp;amp;amp;lt;strong&amp;amp;amp;gt;'),
--- and with line breaks or semicolons instead of commas ('English\r\nRussian', 'German;').
--- Steam's untranslated placeholder '#lang_slovakian' becomes 'Slovak', the name every
--- other game uses.
--- Returns one clean language name per row.
-CREATE FUNCTION core.split_languages(list_text text) RETURNS SETOF text
+-- 'Oct 21, 2008', '21 Oct, 2008' or 'Oct 2008' (stored as the first of the month)
+CREATE FUNCTION core.parse_release_date(txt text) RETURNS date
+LANGUAGE sql STABLE AS $$
+    SELECT CASE
+        WHEN txt ~ '^[A-Za-z]{3} [0-9]{1,2}, [0-9]{4}$' THEN core.try_date(txt, 'Mon DD, YYYY')
+        WHEN txt ~ '^[0-9]{1,2} [A-Za-z]{3}, [0-9]{4}$' THEN core.try_date(txt, 'DD Mon, YYYY')
+        WHEN txt ~ '^[A-Za-z]{3} [0-9]{4}$'             THEN core.try_date(txt, 'Mon YYYY')
+    END
+$$;
+
+-- One entry of a language list can carry leftovers of Steam markup ([b], <strong>,
+-- &amp;), HTML escaping stacked several times ('English&amp;amp;amp;lt;strong...'),
+-- several languages divided by line breaks or semicolons ('English\r\nRussian',
+-- 'German;'), and Steam's untranslated placeholder '#lang_slovakian', which becomes
+-- 'Slovak', the name every other game uses.  Returns one clean language name per row.
+CREATE FUNCTION core.split_languages(entry text) RETURNS SETOF text
 LANGUAGE sql IMMUTABLE AS $$
     WITH decoded AS (
         -- undo the escaping before splitting, because every entity ends in ';'
         SELECT regexp_replace(
-                   replace(replace(regexp_replace(list_text, '&(amp;)+', '&', 'g'),
+                   replace(replace(regexp_replace(entry, '&(amp;)+', '&', 'g'),
                                    '&lt;', '<'), '&gt;', '>'),
                    '&#?[a-z0-9]+;', ' ', 'gi') AS txt
     )
     SELECT DISTINCT CASE c.lang WHEN 'lang_slovakian' THEN 'Slovak' ELSE c.lang END
     FROM decoded
-    CROSS JOIN LATERAL regexp_split_to_table(btrim(decoded.txt, '[]'), ',|;|(\\[rn])+|<br\s*/?>', 'i') AS p(part)
+    CROSS JOIN LATERAL regexp_split_to_table(
+        decoded.txt, ',|;|(\r|\n)+|(\\[rn])+|<br\s*/?>', 'i') AS p(part)
     CROSS JOIN LATERAL (
         SELECT btrim(
                    regexp_replace(
@@ -55,21 +100,6 @@ LANGUAGE sql IMMUTABLE AS $$
                    ' ''".') AS lang
     ) AS c
     WHERE c.lang <> ''
-$$;
-
--- The CSV joins developer names with a bare comma, while a comma inside a company
--- name is followed by a space ('CAPCOM Co., Ltd.').  Split only on commas that are
--- followed neither by a space nor by a company suffix ('Name,Inc.'), then write the
--- commas that were kept the usual way: 'Name,Inc.' -> 'Name, Inc.'.
--- ord = place in the source list (1 = first).
-CREATE FUNCTION core.split_developers(list_text text) RETURNS TABLE (developer text, ord bigint)
-LANGUAGE sql IMMUTABLE AS $$
-    SELECT regexp_replace(btrim(d.part), ',(?=\S)', ', ', 'g'), d.ord
-    FROM unnest(regexp_split_to_array(
-             list_text,
-             ',(?! )(?!(inc|incorporated|ltd|limited|llc|l\.l\.c|co|corp|corporation|gmbh|s\.a|s\.r\.o|srl|pty|plc)\.?(,|$))',
-             'i')) WITH ORDINALITY AS d(part, ord)
-    WHERE btrim(d.part) <> ''
 $$;
 
 
@@ -103,7 +133,7 @@ CREATE TABLE core.games (
     median_playtime_two_weeks   integer          -- minutes
 );
 
-COMMENT ON TABLE core.games IS 'One row per Steam app. Long text and URLs stay in public.games_raw.';
+COMMENT ON TABLE core.games IS 'One row per Steam app. Long text and URLs stay in public.games_json.';
 
 
 -- --- lookup tables and their links to games --------------------------------------
@@ -117,7 +147,8 @@ CREATE TABLE core.tags (
 CREATE TABLE core.game_tags (
     appid     bigint  NOT NULL REFERENCES core.games (appid) ON DELETE CASCADE,
     tag_id    integer NOT NULL REFERENCES core.tags (tag_id),
-    position  integer NOT NULL,
+    position  integer NOT NULL,   -- rank by votes, 1 = most voted (jsonb keeps no key order)
+    votes     integer,            -- players who applied the tag
     PRIMARY KEY (appid, tag_id)
 );
 

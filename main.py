@@ -32,7 +32,7 @@ FORMATS = ["csv", "json"]
 
 PARTS = {
     "get": "download or read games.csv / games.json and load it into PostgreSQL",
-    "model": "build the normalised core schema from the CSV landing table",
+    "model": "build the normalised core schema from the JSON landing table",
     "qa": "add the data-quality constraints and run the checks",
     "analyse": "show sample rows and basic statistics of one table",
     "debug": "run the offline tests in tests/ (no database needed)",
@@ -201,9 +201,9 @@ def run_test_file(path: Path) -> int:
     """Run one test file as a script; return its exit code (a crash counts as 1)."""
     try:
         runpy.run_path(str(path), run_name="__main__")
-    except SystemExit as exc:
+    except SystemExit as exc:  # unittest.main() exits with True / False
         if exc.code is None or isinstance(exc.code, int):
-            return exc.code or 0
+            return int(exc.code or 0)
         return 1
     except Exception as exc:  # pylint: disable=broad-except  # keep running the rest
         print(f"  ERROR {type(exc).__name__}: {exc}")
@@ -222,7 +222,7 @@ def run_debug(args: argparse.Namespace) -> int:
 
     failed = []
     for name in names:
-        print(f"--- {name}")
+        print(f"--- {name}", flush=True)  # unittest writes to stderr; keep the order
         code = run_test_file(TESTS_DIR / f"{name}.py")
         print(f"--- {name}: {'pass' if code == 0 else f'FAIL (exit code {code})'}")
         if code:

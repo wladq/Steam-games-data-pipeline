@@ -44,11 +44,14 @@ kaggle auth login                      # once
 python main.py                         # asks which part to run, then everything else
 python main.py get                     # games.csv  -> public.games_raw
 python main.py get json                # games.json -> public.games_json + public.game_* tables
-python main.py model                   # public.games_raw -> core.* (normalised model)
+python main.py model                   # public.games_json -> core.* (normalised model)
 python main.py qa                      # constraints + checks, prints a report
 python main.py analyse                 # quick look at a table: samples and basic stats
-python main.py debug                   # offline tests in tests/, no database needed
+python main.py debug                   # unit tests in tests/, no database needed
 ```
+
+The model is built from the JSON, so `get json` has to run before `model`. The CSV load is
+optional: it feeds the checks that compare the two files.
 
 `main.py` is the one entry point. Run it without arguments and it asks for the part, then
 for the rest. With arguments, the part comes first, then its parameters. For `get` the order
@@ -68,29 +71,32 @@ database. The per-folder scripts (`python -m get_data`, `python model_data/build
 ## Data model
 
 Two landing tables keep the data as it arrived. The model in the `core` schema is rebuilt
-from the CSV landing table by plain SQL files, in one transaction.
+from the JSON landing table `public.games_json` by plain SQL files, in one transaction.
 
 | Table | One row per | Notes |
 |---|---|---|
 | `core.games` | Steam app | typed columns: parsed release date, owner range as two numbers, prices, review counts |
 | `core.tags`, `core.genres`, `core.developers`, `core.languages` | distinct name | lookup tables with generated ids |
-| `core.game_tags`, `core.game_genres`, `core.game_developers` | game and name | link tables; `position` is the place in the source list |
+| `core.game_tags` | game and tag | `votes` = players who applied the tag; `position` = rank by votes |
+| `core.game_genres`, `core.game_developers` | game and name | link tables; `position` is the place in the source list |
 | `core.game_languages` | game and language | `full_audio` says whether the language is also dubbed |
 
-The lists are split in SQL. Tags and genres use `unnest(string_to_array(tags, ','))`.
-Developers get a split function that only splits on commas followed neither by a space nor
-by a company suffix, so `CAPCOM Co., Ltd.` and `Name,Inc.` each stay one company. Spellings
-that differ only in capitalisation (`1UP games`, `1UP Games`) become one developer under the
-most common spelling. Languages arrive as the text of a Python list with markup leftovers
-and get their own cleaning function.
+Lists come from JSON arrays (`jsonb_array_elements_text ... WITH ORDINALITY`), so nothing is
+split on commas and `CAPCOM Co., Ltd.` arrives as one company. Tags come from the
+`{"Indie": 22, ...}` object with their vote counts. Because jsonb keeps no key order, a
+tag's position is its rank by votes. Keys whose JSON type varies between games, such as
+`discount` (string or number) or `tags` (object or empty array), go through small helper
+functions that turn every shape into one SQL type. Spellings of a developer that differ only
+in capitalisation (`1UP games`, `1UP Games`) become one developer under the most common
+spelling. Language entries carry markup leftovers and get their own cleaning function.
 
-The JSON load builds a second, richer set of tables in `public` (`games`, `game_tags` with
-vote counts, `game_packages` with prices per edition). They are independent of `core`.
+The JSON load also builds a wider set of plain tables in `public` (`games`, `game_tags`,
+`game_packages` with prices per edition, and more). They are independent of `core`.
 
 ## The data-quality story
 
-Numbers in this section come from the load logs and the first QA run on the snapshot
-downloaded in November 2026.
+Numbers in this section come from the load logs and the QA runs on the snapshot downloaded
+in November 2026: the first run on a model built from the CSV, the current one on the JSON.
 
 1. **The CSV header is broken.** Two column names are glued together as `DiscountDLC count`,
    so the file has 39 names for 40 columns and every column after that point is shifted by
@@ -98,13 +104,13 @@ downloaded in November 2026.
    every `discount` must be a number from 0 to 100, which fails immediately if columns are
    still shifted. Result: 125,855 rows, 40 columns, every appid numeric and unique.
 2. **The two files on the same Kaggle page do not match.** The CSV holds 125,855 games, the
-   JSON 148,909. Every CSV game is also in the JSON, so the CSV is a smaller subset, and the
-   core model, built from the CSV, lacks 23,054 games. A check keeps watching for CSV games
-   that the JSON does not know.
+   JSON 148,909. Every CSV game is also in the JSON, so the CSV is a smaller subset. The core
+   model is built from the JSON and covers all 148,909 games. A check keeps watching for CSV
+   games that the JSON does not know.
 3. **The CSV loses information.** It is generated from the JSON by joining lists with
    commas. Tag vote counts and per-edition prices are dropped, and a company name with a
-   comma in it becomes two developers. The JSON load keeps everything. The CSV model works
-   around the comma problem and reports what still slips through.
+   comma in it becomes two developers. This is why the core model is built from the JSON:
+   tag votes are kept and every company arrives as its own list entry.
 4. **The JSON changes type from game to game.** `tags` is an object for 83,390 games and an
    empty array for 65,519. `discount` is a string for 103,249 games and a number for 45,660.
    `score_rank` is a string except for 40 numbers. The loader prints this inventory for
@@ -115,36 +121,48 @@ downloaded in November 2026.
    stores NULL. Owner counts are text ranges such as `20000 - 50000`, stored as two numbers.
    Release dates are text in two formats, `Oct 21, 2008` and `Oct 2008`. Unparseable dates
    become NULL and the raw text is kept next to them.
-7. **The CSV reader could erase real names.** pandas treats words such as `None`, `NA` and
-   `null` as missing values, so a game with such a name would load as NULL. A check
-   compares the CSV load with the JSON load: in this snapshot no name was lost. The one
-   game without a name (appid 396420) has no name in the JSON either.
+7. **The CSV reader could erase real names.** By default pandas treats words such as
+   `None`, `NA` and `null` as missing values, so a game with such a name would load as
+   NULL. The loader now counts only empty cells as missing, and a check compares the CSV
+   load with the JSON load to catch any name that still goes missing. In this snapshot no
+   name was lost. The one game without a name (appid 396420) has no name in the JSON either.
 8. **PostgreSQL cannot store NUL characters.** The JSON loader strips them and reports the
    count. This snapshot contained none.
-9. **The first QA run caught two bugs in the model's own cleaning.** Some language lists
-   are HTML-escaped several times over (`English&amp;amp;amp;amp;lt;strong…`), and some use
-   line breaks or semicolons instead of commas (`English\r\nRussian`, `German;`), which left
-   14 broken language names. Splitting `Name,Inc.` at the comma produced 13 developers that
-   are only a suffix, such as `inc.` with 42 games. After fixing both cleaning functions the
-   checks report 1 suffix developer (`LIMITED`) and a couple of odd language names taken
-   from the source as written, such as `Japanese (all with full audio support)`. Steam's
-   placeholder `#lang_slovakian` is mapped to `Slovak`. The same checks guard against the
-   bugs coming back.
+9. **The first QA run caught two bugs in the model's own cleaning.** The first model was
+   built from the CSV. Some language lists are HTML-escaped several times over
+   (`English&amp;amp;amp;amp;lt;strong…`), and some use line breaks or semicolons instead of
+   commas (`English\r\nRussian`, `German;`), which left 14 broken language names. Splitting
+   `Name,Inc.` at the comma produced 13 developers that are only a suffix, such as `inc.`
+   with 42 games. The language cleaning was fixed and now runs on each entry of the JSON
+   lists, which carry the same junk. The developer problem disappeared with the move to the
+   JSON. Steam's placeholder `#lang_slovakian` is mapped to `Slovak`.
+10. **Some errors stay in the data on purpose.** The JSON lists `LIMITED` as one game's only
+    developer, and two language entries read `Japanese (all with full audio support)` and
+    `Traditional Chinese (text only)`. Nine games, all only in the JSON, list none of
+    Windows, Mac and Linux. All of them are kept as published. The QA checks report them as
+    warnings, and the unit tests use the names as known errors that the checks must keep
+    flagging.
+11. **The JSON model reconciles with an independent build.** `core.game_tags` has 1,180,708
+    rows, exactly as many as `public.game_tags`, which the JSON loader builds with
+    different SQL. Every game with tags or developers in the JSON has them linked, and every
+    tag kept its vote count.
 
 ### How quality is checked
 
-The same question, "is this data right?", is answered at three points.
+The same question, "is this data right?", is answered at four points.
 
 | Where | How | What it is good for |
 |---|---|---|
+| Offline, without a database | `tests/`: unit tests, run with `python main.py debug` | the command line, the loader steps, the SQL files, and the QA rules tested against known errors |
 | Before loading, in Python | sanity checks in the loader | stops a broken file before it replaces a good table |
 | In the database, permanently | `qa_data/01_constraints.sql`: CHECK constraints, plus keys and foreign keys in the schema | rules that must hold for every row, forever; the database refuses bad writes |
-| In the database, on demand | `qa_data/02_checks.sql`: 27 queries that return the rows breaking a rule | counting problems instead of refusing them, rules across tables, rules that depend on today's date |
+| In the database, on demand | `qa_data/02_checks.sql`: 29 queries that return the rows breaking a rule | counting problems instead of refusing them, rules across tables, rules that depend on today's date |
 
 Constraints are added as `NOT VALID` and then validated. A rule that existing rows break is
 reported as a finding, and it still protects every future write. A rule that the source data
-itself breaks is a warning check instead of a constraint: the one game without a name would
-otherwise fail every run, and a run that always fails says nothing. Each check has a severity:
+itself breaks is a warning check instead of a constraint: the one game without a name and the
+9 games without a platform would otherwise fail every run, and a run that always fails says
+nothing. Each check has a severity:
 `error` fails the run, `warn` is only reported. `python main.py qa` prints one line
 per constraint and per check and exits with code 1 if anything of severity `error` is wrong.
 
@@ -163,8 +181,7 @@ per constraint and per check and exits with code 1 if anything of severity `erro
 - **Popular games are over-represented in reviews.** Review counts are extremely skewed: a
   small number of hits collect most of the reviews, so any statistic weighted by reviews
   mostly describes blockbusters. Tags behave the same way, because a game only gets tags
-  once enough players vote: 65,519 of the 148,909 games in the JSON have none, and 42,502 of
-  the 125,855 in the core model. Compare
+  once enough players vote: 65,519 of the 148,909 games in the JSON have none. Compare
   medians or group games by size before drawing conclusions. This query measures the skew:
 
   ```sql
@@ -178,12 +195,12 @@ per constraint and per check and exits with code 1 if anything of severity `erro
   FROM ranked;
   ```
 
-- **The core model is built from the CSV**, so it has the smaller snapshot and no tag votes.
-- **Lists can be empty in the source.** 8,449 games have no developer, 8,423 no genre and
-  8,391 no language. The samples are mostly editors, dedicated servers and older titles.
-- **Developer splitting is a heuristic.** A name with a comma and no space after it is still
-  split in two unless a company suffix follows, and merging by capitalisation assumes that
-  `1UP games` and `1UP Games` are the same company. `qa_data` reports the leftovers.
+- **Lists can be empty in the source.** 8,457 games have no developer, 8,437 no genre and
+  8,402 no language. The samples are older titles and playtests.
+- **Developers are merged by capitalisation.** The model assumes that `1UP games` and
+  `1UP Games` are the same company.
+- **Tag positions are ranks by votes**, not the order Steam shows, because jsonb does not
+  keep the key order of an object.
 - **Dates given as month and year** are stored as the first day of that month.
 - **Log anonymisation is pattern based.** It is a safety net, not a guarantee.
 
@@ -203,6 +220,6 @@ get_data/        loader package: prompts, config, Kaggle download, CSV and JSON 
 model_data/      SQL that builds the core schema, and build.py to run it
 qa_data/         SQL constraints and checks, and run_qa.py to run them
 analyse_data/    basic_check.py: sample rows and basic statistics of a table
-tests/           check_cleaning.py: offline check of the SQL files and the cleaning patterns
+tests/           unit tests (main.py, loader, SQL files, QA rules), run with python main.py debug
 main.py          one entry point: get, model, qa, analyse, debug
 ```

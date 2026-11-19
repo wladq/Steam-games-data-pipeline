@@ -7,7 +7,7 @@
 -- Header lines read by the runner:
 --   check:     unique name
 --   severity:  error = must be zero (the run fails), warn = reported only
---   requires:  optional table; the check is skipped when it does not exist
+--   requires:  optional tables, comma separated; the check is skipped when one is missing
 --   about:     one line shown in the report
 
 
@@ -15,36 +15,49 @@
 
 -- check: landing_and_core_row_counts_match
 -- severity: error
--- about: core.games must have exactly as many rows as public.games_raw
-SELECT r.n AS landing_rows, g.n AS core_rows
-FROM (SELECT count(*) AS n FROM public.games_raw) AS r
+-- requires: public.games_json
+-- about: core.games must have exactly as many rows as the JSON landing table
+SELECT j.n AS landing_rows, g.n AS core_rows
+FROM (SELECT count(*) AS n FROM public.games_json) AS j
 CROSS JOIN (SELECT count(*) AS n FROM core.games) AS g
-WHERE r.n <> g.n;
+WHERE j.n <> g.n;
 
 -- check: games_with_tags_all_linked
 -- severity: error
--- about: a game whose raw tags text is not empty must have rows in core.game_tags
-SELECT r.appid, r.tags
-FROM public.games_raw AS r
-WHERE btrim(coalesce(r.tags, '')) <> ''
-  AND NOT EXISTS (SELECT 1 FROM core.game_tags AS gt WHERE gt.appid = r.appid);
+-- requires: public.games_json
+-- about: a game whose JSON tags object is not empty must have rows in core.game_tags
+SELECT j.appid
+FROM public.games_json AS j
+WHERE jsonb_typeof(j.data->'tags') = 'object'
+  AND j.data->'tags' <> '{}'::jsonb
+  AND NOT EXISTS (SELECT 1 FROM core.game_tags AS gt WHERE gt.appid = j.appid);
+
+-- check: games_with_developers_all_linked
+-- severity: error
+-- requires: public.games_json
+-- about: a game with a non-empty JSON developers list must have rows in core.game_developers
+SELECT j.appid
+FROM public.games_json AS j
+WHERE EXISTS (SELECT 1 FROM jsonb_array_elements_text(core.jlist(j.data->'developers')) AS d(name)
+              WHERE btrim(d.name) <> '')
+  AND NOT EXISTS (SELECT 1 FROM core.game_developers AS gd WHERE gd.appid = j.appid);
 
 -- check: csv_games_missing_from_json
 -- severity: warn
--- requires: public.games_json
+-- requires: public.games_raw, public.games_json
 -- about: games in the CSV snapshot that the JSON snapshot does not contain
-SELECT g.appid, g.name
-FROM core.games AS g
-WHERE NOT EXISTS (SELECT 1 FROM public.games_json AS j WHERE j.appid = g.appid);
+SELECT r.appid, r.name
+FROM public.games_raw AS r
+WHERE NOT EXISTS (SELECT 1 FROM public.games_json AS j WHERE j.appid = r.appid);
 
 -- check: names_lost_by_csv_reader
 -- severity: warn
--- requires: public.games_json
--- about: name is NULL in the CSV load although the JSON has one (pandas reads 'None', 'NA', 'null' as missing)
-SELECT g.appid, j.data->>'name' AS json_name
-FROM core.games AS g
-JOIN public.games_json AS j ON j.appid = g.appid
-WHERE g.name IS NULL
+-- requires: public.games_raw, public.games_json
+-- about: name is NULL in the CSV load although the JSON has one (a CSV reading problem)
+SELECT r.appid, j.data->>'name' AS json_name
+FROM public.games_raw AS r
+JOIN public.games_json AS j ON j.appid = r.appid
+WHERE r.name IS NULL
   AND btrim(coalesce(j.data->>'name', '')) <> '';
 
 
@@ -57,7 +70,7 @@ SELECT appid FROM core.games WHERE name IS NULL;
 
 -- check: release_date_not_parsed
 -- severity: warn
--- about: release date text that is neither 'Mon DD, YYYY' nor 'Mon YYYY'
+-- about: release date text in none of the formats 'Mon DD, YYYY', 'DD Mon, YYYY', 'Mon YYYY'
 SELECT appid, name, release_date_raw
 FROM core.games
 WHERE release_date IS NULL
@@ -90,6 +103,14 @@ WHERE NOT EXISTS (SELECT 1 FROM core.game_genres AS x WHERE x.appid = g.appid);
 SELECT g.appid, g.name
 FROM core.games AS g
 WHERE NOT EXISTS (SELECT 1 FROM core.game_tags AS x WHERE x.appid = g.appid);
+
+-- check: tag_votes_missing
+-- severity: warn
+-- about: tags without a vote count (the source gave a list of names instead of votes)
+SELECT gt.appid, t.name AS tag
+FROM core.game_tags AS gt
+JOIN core.tags AS t ON t.tag_id = gt.tag_id
+WHERE gt.votes IS NULL;
 
 -- check: game_without_language
 -- severity: warn
@@ -140,7 +161,7 @@ SELECT appid, name, release_date FROM core.games WHERE release_date > CURRENT_DA
 
 -- check: no_platform
 -- severity: warn
--- about: games flagged for none of Windows, Mac, Linux
+-- about: games flagged for none of Windows, Mac, Linux (a warning, not a constraint: the source has 9)
 SELECT appid, name FROM core.games WHERE NOT (windows OR mac OR linux);
 
 
@@ -193,7 +214,7 @@ HAVING count(*) > 1;
 
 -- check: developer_name_is_company_suffix
 -- severity: warn
--- about: developer rows that are only a company suffix, left over from splitting 'Name,Inc.'
+-- about: developer names that are only a company suffix, such as 'LIMITED'
 SELECT d.developer_id, d.name, count(gd.appid) AS games
 FROM core.developers AS d
 LEFT JOIN core.game_developers AS gd ON gd.developer_id = d.developer_id

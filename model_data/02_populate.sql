@@ -1,4 +1,6 @@
--- Fill the core schema from public.games_raw.  Runs after 01_schema.sql, same transaction.
+-- Fill the core schema from public.games_json.  Runs after 01_schema.sql, same transaction.
+-- Every game is one jsonb object in j.data; lists are JSON arrays, so nothing has to be
+-- split on commas.  The core.j* helpers in 01_schema.sql absorb keys whose type varies.
 
 -- --- games -----------------------------------------------------------------------
 
@@ -10,81 +12,104 @@ INSERT INTO core.games (
     median_playtime_forever, median_playtime_two_weeks
 )
 SELECT
-    r.appid::bigint,
-    NULLIF(btrim(r.name), ''),
-    CASE
-        WHEN r.release_date ~ '^[A-Za-z]{3} [0-9]{1,2}, [0-9]{4}$' THEN core.try_date(r.release_date, 'Mon DD, YYYY')
-        WHEN r.release_date ~ '^[A-Za-z]{3} [0-9]{4}$'             THEN core.try_date(r.release_date, 'Mon YYYY')
-    END,
-    r.release_date,
-    r.estimated_owners,
-    CASE WHEN r.estimated_owners ~ '^[0-9]+ - [0-9]+$' THEN split_part(r.estimated_owners, ' - ', 1)::bigint END,
-    CASE WHEN r.estimated_owners ~ '^[0-9]+ - [0-9]+$' THEN split_part(r.estimated_owners, ' - ', 2)::bigint END,
-    r.price::numeric(10, 2),
-    r.discount::integer,
-    r.dlc_count::integer,
-    r.required_age::integer,
-    r.windows::boolean,
-    r.mac::boolean,
-    r.linux::boolean,
-    NULLIF(r.metacritic_score::integer, 0),
-    r.user_score::integer,
-    r.positive::integer,
-    r.negative::integer,
-    r.recommendations::integer,
-    r.achievements::integer,
-    r.peak_ccu::integer,
-    r.average_playtime_forever::integer,
-    r.average_playtime_two_weeks::integer,
-    r.median_playtime_forever::integer,
-    r.median_playtime_two_weeks::integer
-FROM public.games_raw AS r;
+    j.appid,
+    NULLIF(btrim(j.data->>'name'), ''),
+    core.parse_release_date(d.raw),
+    d.raw,
+    j.data->>'estimated_owners',
+    CASE WHEN j.data->>'estimated_owners' ~ '^[0-9]+ - [0-9]+$'
+         THEN split_part(j.data->>'estimated_owners', ' - ', 1)::bigint END,
+    CASE WHEN j.data->>'estimated_owners' ~ '^[0-9]+ - [0-9]+$'
+         THEN split_part(j.data->>'estimated_owners', ' - ', 2)::bigint END,
+    core.jnum(j.data->'price')::numeric(10, 2),
+    core.jnum(j.data->'discount')::integer,
+    core.jnum(j.data->'dlc_count')::integer,
+    core.jnum(j.data->'required_age')::integer,
+    core.jbool(j.data->'windows'),
+    core.jbool(j.data->'mac'),
+    core.jbool(j.data->'linux'),
+    NULLIF(core.jnum(j.data->'metacritic_score')::integer, 0),
+    core.jnum(j.data->'user_score')::integer,
+    core.jnum(j.data->'positive')::integer,
+    core.jnum(j.data->'negative')::integer,
+    core.jnum(j.data->'recommendations')::integer,
+    core.jnum(j.data->'achievements')::integer,
+    core.jnum(j.data->'peak_ccu')::integer,
+    core.jnum(j.data->'average_playtime_forever')::integer,
+    core.jnum(j.data->'average_playtime_2weeks')::integer,
+    core.jnum(j.data->'median_playtime_forever')::integer,
+    core.jnum(j.data->'median_playtime_2weeks')::integer
+FROM public.games_json AS j
+-- 'Oct 21, 2008' in this dataset; newer scrapes nest it as {"date": ..., "coming_soon": ...}
+CROSS JOIN LATERAL (
+    SELECT NULLIF(btrim(COALESCE(j.data->'release_date'->>'date', j.data->>'release_date')), '')
+           AS raw
+) AS d;
 
 
--- --- tags: 'Indie,Casual,Sports' -> one row per tag ------------------------------
+-- --- tags: {"Indie": 22, "Casual": 9} -> one row per tag, with its votes ----------
+-- A game without tags has an empty array instead of an object.  A list of names is
+-- accepted too (votes unknown).  jsonb keeps no key order, so position is the rank
+-- by votes.
+
+CREATE TEMP TABLE tag_mentions AS
+SELECT appid, tag, max(votes) AS votes
+FROM (
+    SELECT j.appid, btrim(t.key) AS tag, core.jnum(t.value)::integer AS votes
+    FROM public.games_json AS j
+    CROSS JOIN LATERAL jsonb_each(
+        CASE WHEN jsonb_typeof(j.data->'tags') = 'object' THEN j.data->'tags'
+             ELSE '{}'::jsonb END) AS t(key, value)
+    UNION ALL
+    SELECT j.appid, btrim(t.tag), NULL
+    FROM public.games_json AS j
+    CROSS JOIN LATERAL jsonb_array_elements_text(core.jlist(j.data->'tags')) AS t(tag)
+) AS m
+WHERE tag <> ''
+GROUP BY appid, tag;
 
 INSERT INTO core.tags (name)
-SELECT DISTINCT btrim(t.tag)
-FROM public.games_raw AS r
-CROSS JOIN LATERAL unnest(string_to_array(r.tags, ',')) AS t(tag)
-WHERE btrim(t.tag) <> ''
-ORDER BY 1;
+SELECT DISTINCT tag FROM tag_mentions ORDER BY 1;
 
-INSERT INTO core.game_tags (appid, tag_id, position)
-SELECT r.appid, tg.tag_id, min(t.ord)::integer
-FROM public.games_raw AS r
-CROSS JOIN LATERAL unnest(string_to_array(r.tags, ',')) WITH ORDINALITY AS t(tag, ord)
-JOIN core.tags AS tg ON tg.name = btrim(t.tag)
-GROUP BY r.appid, tg.tag_id;
+INSERT INTO core.game_tags (appid, tag_id, position, votes)
+SELECT m.appid, t.tag_id,
+       row_number() OVER (PARTITION BY m.appid ORDER BY m.votes DESC NULLS LAST, m.tag)::integer,
+       m.votes
+FROM tag_mentions AS m
+JOIN core.tags AS t ON t.name = m.tag;
+
+DROP TABLE tag_mentions;
 
 
 -- --- genres ----------------------------------------------------------------------
 
 INSERT INTO core.genres (name)
 SELECT DISTINCT btrim(g.genre)
-FROM public.games_raw AS r
-CROSS JOIN LATERAL unnest(string_to_array(r.genres, ',')) AS g(genre)
+FROM public.games_json AS j
+CROSS JOIN LATERAL jsonb_array_elements_text(core.jlist(j.data->'genres')) AS g(genre)
 WHERE btrim(g.genre) <> ''
 ORDER BY 1;
 
 INSERT INTO core.game_genres (appid, genre_id, position)
-SELECT r.appid, gn.genre_id, min(g.ord)::integer
-FROM public.games_raw AS r
-CROSS JOIN LATERAL unnest(string_to_array(r.genres, ',')) WITH ORDINALITY AS g(genre, ord)
+SELECT j.appid, gn.genre_id, min(g.ord)::integer
+FROM public.games_json AS j
+CROSS JOIN LATERAL jsonb_array_elements_text(core.jlist(j.data->'genres'))
+    WITH ORDINALITY AS g(genre, ord)
 JOIN core.genres AS gn ON gn.name = btrim(g.genre)
-GROUP BY r.appid, gn.genre_id;
+GROUP BY j.appid, gn.genre_id;
 
 
 -- --- developers ------------------------------------------------------------------
--- core.split_developers keeps company names whole (see 01_schema.sql).  It is a
--- heuristic: qa_data reports the fragments that still slip through.  Spellings that
--- differ only in capitalisation ('1UP games', '1UP Games') become one developer,
--- named by the spelling used by the most games.
+-- The JSON lists each company as one array element, so 'CAPCOM Co., Ltd.' needs no
+-- splitting heuristic.  Spellings that differ only in capitalisation ('1UP games',
+-- '1UP Games') become one developer, named by the spelling used by the most games.
 
 CREATE TEMP TABLE developer_mentions AS
-SELECT r.appid, d.developer, d.ord
-FROM public.games_raw AS r
-CROSS JOIN LATERAL core.split_developers(r.developers) AS d;
+SELECT j.appid, btrim(d.developer) AS developer, d.ord
+FROM public.games_json AS j
+CROSS JOIN LATERAL jsonb_array_elements_text(core.jlist(j.data->'developers'))
+    WITH ORDINALITY AS d(developer, ord)
+WHERE btrim(d.developer) <> '';
 
 INSERT INTO core.developers (name)
 SELECT DISTINCT ON (lower(developer)) developer
@@ -103,29 +128,27 @@ DROP TABLE developer_mentions;
 
 -- --- languages: interface/subtitle list plus the full-audio list ------------------
 
+CREATE TEMP TABLE language_mentions AS
+SELECT j.appid, l.language, false AS is_audio
+FROM public.games_json AS j
+CROSS JOIN LATERAL jsonb_array_elements_text(core.jlist(j.data->'supported_languages')) AS e(entry)
+CROSS JOIN LATERAL core.split_languages(e.entry) AS l(language)
+UNION ALL
+SELECT j.appid, l.language, true
+FROM public.games_json AS j
+CROSS JOIN LATERAL jsonb_array_elements_text(core.jlist(j.data->'full_audio_languages')) AS e(entry)
+CROSS JOIN LATERAL core.split_languages(e.entry) AS l(language);
+
 INSERT INTO core.languages (name)
-SELECT l.language
-FROM public.games_raw AS r
-CROSS JOIN LATERAL core.split_languages(r.supported_languages) AS l(language)
-UNION
-SELECT l.language
-FROM public.games_raw AS r
-CROSS JOIN LATERAL core.split_languages(r.full_audio_languages) AS l(language)
-ORDER BY 1;
+SELECT DISTINCT language FROM language_mentions ORDER BY 1;
 
 INSERT INTO core.game_languages (appid, language_id, full_audio)
-SELECT u.appid, lg.language_id, bool_or(u.is_audio)
-FROM (
-    SELECT r.appid, l.language, false AS is_audio
-    FROM public.games_raw AS r
-    CROSS JOIN LATERAL core.split_languages(r.supported_languages) AS l(language)
-    UNION ALL
-    SELECT r.appid, l.language, true
-    FROM public.games_raw AS r
-    CROSS JOIN LATERAL core.split_languages(r.full_audio_languages) AS l(language)
-) AS u
-JOIN core.languages AS lg ON lg.name = u.language
-GROUP BY u.appid, lg.language_id;
+SELECT m.appid, lg.language_id, bool_or(m.is_audio)
+FROM language_mentions AS m
+JOIN core.languages AS lg ON lg.name = m.language
+GROUP BY m.appid, lg.language_id;
+
+DROP TABLE language_mentions;
 
 
 -- --- indexes for the reverse lookups, then fresh planner statistics ---------------

@@ -1,4 +1,4 @@
-"""Build the normalised `core` schema from the CSV landing table public.games_raw.
+"""Build the normalised `core` schema from the JSON landing table public.games_json.
 
 Run from the project root:
     python model_data/build.py          # asks before dropping an existing core schema
@@ -28,36 +28,8 @@ from get_data.sql_runner import (
 
 log = logging.getLogger("model_data")
 
-SOURCE_TABLE = "games_raw"
-REQUIRED_COLUMNS = {
-    "appid",
-    "name",
-    "release_date",
-    "estimated_owners",
-    "price",
-    "discount",
-    "dlc_count",
-    "required_age",
-    "windows",
-    "mac",
-    "linux",
-    "metacritic_score",
-    "user_score",
-    "positive",
-    "negative",
-    "recommendations",
-    "achievements",
-    "peak_ccu",
-    "average_playtime_forever",
-    "average_playtime_two_weeks",
-    "median_playtime_forever",
-    "median_playtime_two_weeks",
-    "tags",
-    "genres",
-    "developers",
-    "supported_languages",
-    "full_audio_languages",
-}
+SOURCE_TABLE = "games_json"
+REQUIRED_COLUMNS = {"appid": "bigint", "data": "jsonb"}
 TABLES = (
     "games",
     "tags",
@@ -72,30 +44,29 @@ TABLES = (
 
 
 def check_source(conn) -> None:
-    """Stop with a clear message if the landing table is missing or not tidied."""
-    rows = (
+    """Stop with a clear message if the landing table is missing or has another shape."""
+    rows = dict(
         execute(
             conn,
-            "SELECT column_name FROM information_schema.columns "
+            "SELECT column_name, data_type FROM information_schema.columns "
             f"WHERE table_schema = 'public' AND table_name = '{SOURCE_TABLE}'",
-        )
-        .scalars()
-        .all()
+        ).all()
     )
     if not rows:
         raise RuntimeError(
-            f"public.{SOURCE_TABLE} does not exist. Load the CSV first: python main.py get"
+            f"public.{SOURCE_TABLE} does not exist. "
+            "Load the JSON first: python main.py get json"
         )
-    missing = sorted(REQUIRED_COLUMNS - set(rows))
-    if missing:
+    wrong = {c: t for c, t in REQUIRED_COLUMNS.items() if rows.get(c) != t}
+    if wrong:
         raise RuntimeError(
-            f"public.{SOURCE_TABLE} lacks columns {missing}. Reload the CSV and accept "
-            "the header fix and the snake_case column names."
+            f"public.{SOURCE_TABLE} needs the columns {REQUIRED_COLUMNS}, found {rows}. "
+            "Reload it: python main.py get json"
         )
 
 
 def build(engine) -> None:
-    """Build the core schema from the public.games_raw landing table."""
+    """Build the core schema from the public.games_json landing table."""
     files = sorted(HERE.glob("*.sql"))
     with engine.connect() as conn:
         check_source(conn)

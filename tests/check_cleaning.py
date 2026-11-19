@@ -1,17 +1,21 @@
-"""Offline check, no database needed: the SQL files still split into statements, and the
-cleaning regexes of core.split_languages and core.split_developers, mirrored in Python,
-clean the real problem strings found in the Kaggle CSV.
+"""Offline tests of the SQL side, no database needed.
 
-Run:  python main.py debug            (every test in tests/)
-      python tests/check_cleaning.py  (this file only)
+- every .sql file splits into balanced statements, and every check has its headers
+- the language cleaning of core.split_languages, mirrored in Python, cleans the real
+  problem entries found in games.json
+- the QA rules flag the known errors that are left in the data on purpose, and do not
+  flag clean names; their patterns are read from qa_data/02_checks.sql itself
 
-Exit code 0 when every case passes, 1 otherwise.  The Python copies only approximate
-PostgreSQL's regular expressions; the real test is `python main.py model` followed by
-`python main.py qa`.
+Run:  python main.py debug                 (every test in tests/)
+      python tests/check_cleaning.py       (this file only)
+
+The Python copy of the cleaning only approximates PostgreSQL's regular expressions;
+the real test is `python main.py model` followed by `python main.py qa`.
 """
 
 import re
 import sys
+import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -25,45 +29,39 @@ SQL_FILES = (
     "qa_data/01_constraints.sql",
     "qa_data/02_checks.sql",
 )
-SUFFIX = (
-    r"(inc|incorporated|ltd|limited|llc|l\.l\.c|co|corp|corporation|gmbh"
-    r"|s\.a|s\.r\.o|srl|pty|plc)"
-)
+CHECKS_FILE = ROOT / "qa_data" / "02_checks.sql"
 
-# (raw text as it appears in games.csv, expected result)
+# (one entry of a language list as games.json has it, expected clean names)
 LANGUAGE_CASES = [
-    (
-        "['English&amp;amp;amp;amp;lt;strong&amp;amp;amp;amp;gt;"
-        "&amp;amp;amp;amp;lt;/strong&amp;amp;amp;amp;gt;']",
-        ["English"],
-    ),
-    (
-        r"['English\r\nRussian\r\nSpanish - Spain\r\nJapanese\r\nCzech']",
-        ["Czech", "English", "Japanese", "Russian", "Spanish - Spain"],
-    ),
-    (r"['English[b][/b]', 'Russian\r\n[b][/b]']", ["English", "Russian"]),
-    (
-        "['English.', 'German;', 'Spanish - Latin America']",
-        ["English", "German", "Spanish - Latin America"],
-    ),
-    ("['Korean', '#lang_slovakian', 'Slovak']", ["Korean", "Slovak"]),
-]
-DEVELOPER_CASES = [
-    ("CAPCOM Co., Ltd.", ["CAPCOM Co., Ltd."]),
-    ("Studio Name,Inc.", ["Studio Name, Inc."]),
-    ("A,B,C", ["A", "B", "C"]),
-    ("Foo,Co.,Ltd.,Bar Games", ["Foo, Co., Ltd.", "Bar Games"]),
-    ("Alpha,Co-op Games", ["Alpha", "Co-op Games"]),
-    ("Gamma,INC.,Delta", ["Gamma, INC.", "Delta"]),
+    ("English&amp;amp;amp;amp;lt;strong&amp;amp;amp;amp;gt;"
+     "&amp;amp;amp;amp;lt;/strong&amp;amp;amp;amp;gt;", ["English"]),
+    ("English\r\nRussian\r\nSpanish - Spain\r\nJapanese\r\nCzech",
+     ["Czech", "English", "Japanese", "Russian", "Spanish - Spain"]),
+    ("Italian \r\n\r\n[b][/b] ", ["Italian"]),
+    ("English[b][/b]", ["English"]),
+    ("English.", ["English"]),
+    ("German;", ["German"]),
+    ("#lang_slovakian", ["Slovak"]),
+    ("Spanish - Latin America", ["Spanish - Latin America"]),
 ]
 
+# Errors left in the data on purpose: the cleaning keeps them, the QA rules must flag
+# them.  When the cleaning learns to fix one, move it to the cases above.
+KNOWN_LANGUAGE_ERRORS = ["Japanese (all with full audio support)",
+                         "Traditional Chinese (text only)"]  # flagged for its length
+KNOWN_DEVELOPER_ERRORS = ["LIMITED"]  # the JSON lists it as a game's only developer
 
-def split_languages(text: str) -> list[str]:
+CLEAN_LANGUAGES = ["English", "Spanish - Spain", "Traditional Chinese", "K'iche",
+                   "Portuguese - Brazil"]
+CLEAN_DEVELOPERS = ["Limited Run Games", "CAPCOM Co., Ltd.", "Valve", "Inc Studios"]
+
+
+def split_languages(entry: str) -> list[str]:
     """Mirror of core.split_languages in model_data/01_schema.sql."""
-    t = re.sub(r"&(amp;)+", "&", text).replace("&lt;", "<").replace("&gt;", ">")
+    t = re.sub(r"&(amp;)+", "&", entry).replace("&lt;", "<").replace("&gt;", ">")
     t = re.sub(r"&#?[a-z0-9]+;", " ", t, flags=re.I)
     out = set()
-    for part in re.split(r",|;|(?:\\[rn])+|<br\s*/?>", t.strip("[]"), flags=re.I):
+    for part in re.split(r",|;|[\r\n]+|(?:\\[rn])+|<br\s*/?>", t, flags=re.I):
         lang = re.sub(r"\\[rnt]|<[^>]*>|\[/?[a-z]+\]|[*#]", " ", part, flags=re.I)
         lang = re.sub(r"\s+", " ", lang).strip(" '\".")
         if lang:
@@ -71,52 +69,94 @@ def split_languages(text: str) -> list[str]:
     return sorted(out)
 
 
-def split_developers(text: str) -> list[str]:
-    """Mirror of core.split_developers in model_data/01_schema.sql."""
-    parts = re.split(r",(?! )(?!" + SUFFIX + r"\.?(,|$))", text, flags=re.I)
-    parts = parts[::3]  # re.split also returns the pattern's two groups
-    return [re.sub(r",(?=\S)", ", ", p.strip()) for p in parts if p and p.strip()]
+def check_sql(name: str) -> str:
+    """The SQL of one check in 02_checks.sql, found by its '-- check:' name."""
+    for stmt in read_statements(CHECKS_FILE):
+        if stmt.meta.get("check") == name:
+            return stmt.sql
+    raise LookupError(f"no check named {name} in {CHECKS_FILE.name}")
 
 
-def check_sql_files() -> list[str]:
-    """Every SQL file splits into balanced statements; every check has its headers."""
-    problems = []
-    for rel in SQL_FILES:
-        stmts = read_statements(ROOT / rel)
-        bad = [s.line for s in stmts
-               if s.sql.count("'") % 2 or s.sql.count("(") != s.sql.count(")")]
-        print(f"  {rel}: {len(stmts)} statements")
-        if not stmts or bad:
-            problems.append(f"{rel}: no statements or unbalanced at lines {bad}")
-        if rel.endswith("02_checks.sql"):
-            names = [s.meta.get("check") for s in stmts]
-            missing = [s.line for s in stmts
-                       if not {"check", "severity", "about"} <= set(s.meta)]
-            if missing or len(names) != len(set(names)):
-                problems.append(f"{rel}: headers missing at {missing} or duplicate names")
-    return problems
+def sql_pattern(sql: str, operator: str) -> str:
+    """The quoted regular expression after `operator` (e.g. '!~'), with '' unescaped."""
+    match = re.search(re.escape(operator) + r"\s*'((?:[^']|'')*)'", sql)
+    if not match:
+        raise LookupError(f"no {operator} pattern in: {sql[:80]}")
+    return match.group(1).replace("''", "'")
 
 
-def check_cases(label: str, func, cases) -> list[str]:
-    """Run each (input, expected) pair through func and report the mismatches."""
-    problems = []
-    for raw, expected in cases:
-        got = func(raw)
-        if got != expected:
-            problems.append(f"{label}: {raw[:50]!r} gave {got}, expected {expected}")
-    print(f"  {label}: {len(cases) - len(problems)} of {len(cases)} cases pass")
-    return problems
+class SqlFilesTest(unittest.TestCase):
+    """The SQL files are well formed for the statement splitter and the QA runner."""
+
+    def test_files_split_into_balanced_statements(self):
+        for rel in SQL_FILES:
+            with self.subTest(file=rel):
+                stmts = read_statements(ROOT / rel)
+                self.assertTrue(stmts)
+                for s in stmts:
+                    self.assertEqual(s.sql.count("'") % 2, 0, f"quotes, line {s.line}")
+                    self.assertEqual(s.sql.count("("), s.sql.count(")"),
+                                     f"parentheses, line {s.line}")
+
+    def test_every_check_has_unique_name_and_headers(self):
+        stmts = read_statements(CHECKS_FILE)
+        names = [s.meta.get("check") for s in stmts]
+        self.assertEqual(len(names), len(set(names)), "duplicate check names")
+        for s in stmts:
+            with self.subTest(line=s.line):
+                self.assertLessEqual({"check", "severity", "about"}, set(s.meta))
+                self.assertIn(s.meta["severity"], ("error", "warn"))
 
 
-def main() -> int:
-    """Run every check; print the problems; return 0 when there are none."""
-    problems = check_sql_files()
-    problems += check_cases("split_languages", split_languages, LANGUAGE_CASES)
-    problems += check_cases("split_developers", split_developers, DEVELOPER_CASES)
-    for problem in problems:
-        print(f"  FAIL {problem}")
-    return 1 if problems else 0
+class LanguageCleaningTest(unittest.TestCase):
+    """The Python copy of core.split_languages cleans the real problem entries."""
+
+    def test_problem_entries_are_cleaned(self):
+        for raw, expected in LANGUAGE_CASES:
+            with self.subTest(raw=raw[:40]):
+                self.assertEqual(split_languages(raw), expected)
+
+    def test_known_errors_survive_cleaning(self):
+        for raw in KNOWN_LANGUAGE_ERRORS:
+            with self.subTest(raw=raw):
+                self.assertEqual(split_languages(raw), [raw])
+
+
+class QaRulesTest(unittest.TestCase):
+    """The rules in 02_checks.sql flag the known errors and leave clean names alone."""
+
+    @classmethod
+    def setUpClass(cls):
+        sql = check_sql("language_name_suspicious")
+        cls.language_ok = re.compile(sql_pattern(sql, "!~"))
+        cls.max_length = int(re.search(r"length\(l\.name\)\s*>\s*(\d+)", sql).group(1))
+        sql = check_sql("developer_name_is_company_suffix")
+        cls.suffix_only = re.compile(sql_pattern(sql, "~*"), re.IGNORECASE)
+
+    def language_flagged(self, name: str) -> bool:
+        """Same logic as the WHERE clause of language_name_suspicious."""
+        return not self.language_ok.search(name) or len(name) > self.max_length
+
+    def test_language_rule_flags_known_errors(self):
+        for name in KNOWN_LANGUAGE_ERRORS + ["lang_slovakian", "English amp;lt;strong"]:
+            with self.subTest(name=name):
+                self.assertTrue(self.language_flagged(name))
+
+    def test_language_rule_passes_clean_names(self):
+        for name in CLEAN_LANGUAGES:
+            with self.subTest(name=name):
+                self.assertFalse(self.language_flagged(name))
+
+    def test_developer_rule_flags_known_errors(self):
+        for name in KNOWN_DEVELOPER_ERRORS + ["inc.", "Ltd", "GmbH"]:
+            with self.subTest(name=name):
+                self.assertTrue(self.suffix_only.search(name))
+
+    def test_developer_rule_passes_clean_names(self):
+        for name in CLEAN_DEVELOPERS:
+            with self.subTest(name=name):
+                self.assertFalse(self.suffix_only.search(name))
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    unittest.main(argv=[sys.argv[0]], verbosity=2)

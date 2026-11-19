@@ -29,8 +29,12 @@ def read_header(csv_path: Path) -> list[str]:
 
 
 def read_csv(csv_path: Path, names: list[str] | None = None) -> pd.DataFrame:
-    """Read the whole file.  `names` replaces the header row when given."""
-    kwargs = dict(index_col=False, low_memory=False)
+    """Read the whole file.  `names` replaces the header row when given.
+
+    Only empty cells count as missing.  pandas would otherwise turn text such as
+    'None', 'NA', 'N/A' or 'null' into NaN, erasing a game or company with that name.
+    """
+    kwargs = dict(index_col=False, low_memory=False, keep_default_na=False, na_values=[""])
     if names is not None:
         return pd.read_csv(csv_path, header=0, names=names, **kwargs)
     return pd.read_csv(csv_path, **kwargs)

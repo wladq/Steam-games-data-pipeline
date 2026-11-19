@@ -70,14 +70,16 @@ def run_checks(conn) -> list[dict]:
                   "about": meta.get("about", ""), "failed": None, "status": "", "detail": ""}
         results.append(result)
 
-        needs = meta.get("requires")
-        if needs:
-            if not _TABLE_NAME.match(needs):
-                result.update(status="ERROR", detail=f"bad 'requires' value {needs!r}")
-                continue
-            if not execute(conn, f"SELECT to_regclass('{needs}') IS NOT NULL").scalar_one():
-                result.update(status="skip", detail=f"{needs} does not exist")
-                continue
+        needs = [t.strip() for t in meta.get("requires", "").split(",") if t.strip()]
+        bad = [t for t in needs if not _TABLE_NAME.match(t)]
+        if bad:
+            result.update(status="ERROR", detail=f"bad 'requires' value {bad}")
+            continue
+        missing = [t for t in needs
+                   if not execute(conn, f"SELECT to_regclass('{t}') IS NOT NULL").scalar_one()]
+        if missing:
+            result.update(status="skip", detail=f"{', '.join(missing)} does not exist")
+            continue
         try:
             failed = execute(conn, f"SELECT count(*) FROM (\n{stmt.sql}\n) AS broken_rows").scalar_one()
         except Exception as exc:  # pylint: disable=broad-except
