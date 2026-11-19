@@ -4,8 +4,8 @@ Run from the project root:
     python analyse_data/basic_check.py                 # games_raw, 5 random rows
     python analyse_data/basic_check.py -n 10 --table games_raw
 
-Connection settings come from db_config.json (saved by get_data), otherwise you
-are prompted.  Password: PGPASSWORD environment variable or a hidden prompt.
+Connection settings: -U -d -H -p flags, else db_config.json (saved by get_data),
+else a prompt.  Password: PGPASSWORD environment variable or a hidden prompt.
 Output is sized to the terminal width.
 """
 
@@ -14,8 +14,6 @@ import re
 import shutil
 import sys
 from pathlib import Path
-from types import SimpleNamespace
-
 import pandas as pd
 from sqlalchemy import text
 
@@ -25,6 +23,7 @@ sys.path.insert(0, str(PROJECT_ROOT))  # so `get_data` imports when run as a scr
 # pylint: disable=wrong-import-position
 from get_data.config import get_password, resolve_settings
 from get_data.db import make_engine
+from get_data.sql_runner import add_db_args
 
 NUMERIC_TYPES = {"smallint", "integer", "bigint", "real", "double precision", "numeric"}
 WIDTH = max(60, shutil.get_terminal_size((100, 30)).columns - 1)
@@ -70,14 +69,30 @@ def print_records(df: pd.DataFrame) -> None:
 
 # --- main ----------------------------------------------------------------------
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--table", default="games_raw", help="table to inspect (default: games_raw)")
-    parser.add_argument("-n", "--rows", type=int, default=5, help="random sample rows to show (default: 5)")
-    args = parser.parse_args()
+DEFAULT_TABLE = "games_raw"
+DEFAULT_ROWS = 5
 
-    no_flags = SimpleNamespace(user=None, database=None, host=None, port=None)
-    settings, _ = resolve_settings(no_flags, PROJECT_ROOT / "db_config.json")
+
+def add_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add the flags of this step; main.py uses it for `python main.py analyse`."""
+    add_db_args(parser)
+    place = parser.add_argument_group("place")
+    place.add_argument("--table", default=DEFAULT_TABLE,
+                       help=f"table to inspect (default: {DEFAULT_TABLE})")
+    place.add_argument("-n", "--rows", type=int, default=DEFAULT_ROWS,
+                       help=f"random sample rows to show (default: {DEFAULT_ROWS})")
+
+
+def main() -> int:
+    """Entry point of `python analyse_data/basic_check.py`."""
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    add_arguments(parser)
+    return run(parser.parse_args())
+
+
+def run(args: argparse.Namespace) -> int:  # pylint: disable=too-many-locals
+    """Print the overview of one table with parsed arguments; return the exit code."""
+    settings, _ = resolve_settings(args, PROJECT_ROOT / "db_config.json")
     engine = make_engine(settings, get_password(settings))
     quote = engine.dialect.identifier_preparer.quote
     table = quote(args.table)

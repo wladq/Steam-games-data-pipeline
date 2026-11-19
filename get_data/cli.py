@@ -93,6 +93,17 @@ def build_parser() -> argparse.ArgumentParser:
 
 # --- data source ---------------------------------------------------------------
 
+SOURCE_QUESTION = "Kaggle dataset (owner/name or URL) or path to a local CSV/JSON file"
+
+
+def classify_source(text: str) -> tuple[str, str | Path]:
+    """Tell a local file from a Kaggle dataset: ('local', Path) or ('kaggle', 'owner/name')."""
+    text = text.strip().strip('"').strip("'")
+    if text.lower().endswith((".csv", ".json")) or Path(text).is_file():
+        return "local", Path(text)
+    return "kaggle", parse_dataset_ref(text)
+
+
 def step_get_file(args) -> Path:
     """Resolve the data source to a local file, downloading into tmp/ if needed."""
     if args.local_file:
@@ -100,22 +111,21 @@ def step_get_file(args) -> Path:
     elif args.kaggle:
         path = _from_kaggle(parse_dataset_ref(args.kaggle), args)
     else:
-        answer = ask_text("Kaggle dataset (owner/name or URL) or path to a local CSV/JSON file",
-                          default=DEFAULT_DATASET, flag_hint="--kaggle or --local")
-        answer = answer.strip().strip('"').strip("'")
-        if answer.lower().endswith((".csv", ".json")) or Path(answer).is_file():
-            path = Path(answer)
-        else:
-            path = _from_kaggle(parse_dataset_ref(answer), args)
+        kind, value = classify_source(ask_text(SOURCE_QUESTION, default=DEFAULT_DATASET,
+                                               flag_hint="--kaggle or --local"))
+        path = value if kind == "local" else _from_kaggle(value, args)
 
     if not path.is_file():
         raise FileNotFoundError(f"File not found: {path}")
+    if args.what and data_format(path) != args.what:
+        raise ValueError(f"Asked for {args.what.upper()}, but {path.name} is a "
+                         f"{data_format(path).upper()} file")
     log.info("Using %s (%.1f MB)", path, path.stat().st_size / 1e6)
     return path
 
 
 def _choose_kaggle_file(files: list[tuple[str, int]], args) -> str:
-    """Pick the dataset file to download: --file, else its CSV, else its JSON (or JSON with --json)."""
+    """Pick the file to download: --file, else the requested format, else CSV, else JSON."""
     names = [n for n, _ in files]
     listing = ", ".join(f"{n} ({b / 1e6:.0f} MB)" for n, b in files)
     log.info("Dataset files: %s", listing)
@@ -125,10 +135,11 @@ def _choose_kaggle_file(files: list[tuple[str, int]], args) -> str:
         return args.file
 
     by_fmt = {fmt: [n for n in names if n.lower().endswith("." + fmt)] for fmt in ("csv", "json")}
-    if args.json:
-        fmt = "json"
+    if args.what:
+        fmt = args.what
         if not by_fmt[fmt]:
-            raise FileNotFoundError(f"--json given, but the dataset has no JSON file. Available: {', '.join(names)}")
+            raise FileNotFoundError(f"{fmt.upper()} requested, but the dataset has no "
+                                    f".{fmt} file. Available: {', '.join(names)}")
     elif by_fmt["csv"]:
         fmt = "csv"
     elif by_fmt["json"]:
@@ -320,7 +331,17 @@ def run(args, state: dict) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    """Entry point of ``python -m get_data``."""
+    return run_cli(build_parser().parse_args(argv))
+
+
+def run_cli(args) -> int:
+    """Run the loader with parsed arguments, from this module's parser or from main.py.
+
+    ``args.what`` is 'csv', 'json' or None (CSV unless the file or dataset is JSON only);
+    this module's own parser sets it through --json.
+    """
+    args.what = getattr(args, "what", None) or ("json" if getattr(args, "json", False) else None)
     setup_logging(args.verbose, args.log_dir)
     register_connection(args.user, args.host, args.database)
     set_auto_yes(args.yes)

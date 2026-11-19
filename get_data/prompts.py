@@ -50,6 +50,16 @@ def ask_yes_no(question: str, default: bool = True) -> bool:
         return result
 
 
+def ask_choice(question: str, choices: list[str], default: str | None = None) -> str:
+    """Ask until the answer is one of choices; a unique beginning such as 'm' is enough."""
+    while True:
+        answer = ask_text(f"{question} ({'/'.join(choices)})", default=default).lower()
+        matches = [c for c in choices if c.startswith(answer)]
+        if answer in choices or len(matches) == 1:
+            return answer if answer in choices else matches[0]
+        print(f"Please answer one of: {', '.join(choices)}.")
+
+
 def ask_text(question: str, default: str | None = None, flag_hint: str | None = None) -> str:
     """Ask for a non-empty string.  Enter picks the default when there is one."""
     shown = f"{question} [{default}]: " if default else f"{question}: "

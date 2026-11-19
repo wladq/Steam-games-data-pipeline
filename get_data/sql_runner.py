@@ -1,4 +1,4 @@
-"""Shared helpers for the SQL folders (model_data/, qa_data/).
+"""Shared helpers for main.py and the SQL folders (model_data/, qa_data/).
 
 - common command-line flags, logging and connection, identical to the loader
 - split a .sql file into statements, keeping each statement's leading comments
@@ -31,18 +31,33 @@ _META = re.compile(r"^([a-z_]+):\s*(.+)$")
 
 # --- command line and connection -------------------------------------------------
 
-def add_common_args(parser: argparse.ArgumentParser) -> None:
-    """The same connection and behaviour flags as `python -m get_data`."""
-    db = parser.add_argument_group("database (flag > saved config > prompt)")
+def add_db_args(parser: argparse.ArgumentParser,
+                title: str = "database (flag > saved config > prompt)"):
+    """Add -U -d -H -p, the same connection flags as `python -m get_data`."""
+    db = parser.add_argument_group(title)
     db.add_argument("-U", "--user", help="database username")
     db.add_argument("-d", "--database", help="database name")
     db.add_argument("-H", "--host", help="database host (default: localhost)")
     db.add_argument("-p", "--port", type=int, help="database port (default: 5433)")
-    run = parser.add_argument_group("behaviour")
-    run.add_argument("-y", "--yes", action="store_true", help="answer yes to every y/n question")
-    run.add_argument("-v", "--verbose", action="store_true", help="show debug messages on screen")
-    run.add_argument("--log-dir", type=Path, default=DEFAULT_LOG_DIR,
-                     help="folder for info.log and debug.log (default: logs/)")
+    return db
+
+
+def add_behaviour_args(parser: argparse.ArgumentParser, title: str = "behaviour"):
+    """Add -y -v --log-dir; return the group so a caller can add its own flags to it."""
+    group = parser.add_argument_group(title)
+    group.add_argument("-y", "--yes", action="store_true",
+                       help="answer yes to every y/n question")
+    group.add_argument("-v", "--verbose", action="store_true",
+                       help="show debug messages on screen")
+    group.add_argument("--log-dir", type=Path, default=DEFAULT_LOG_DIR,
+                       help="folder for info.log and debug.log (default: logs/)")
+    return group
+
+
+def add_common_args(parser: argparse.ArgumentParser) -> None:
+    """Connection flags, then behaviour flags."""
+    add_db_args(parser)
+    add_behaviour_args(parser)
 
 
 def start(args: argparse.Namespace) -> None:

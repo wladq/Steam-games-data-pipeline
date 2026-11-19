@@ -1,6 +1,7 @@
 """get_data: download the Kaggle Steam games dataset and load it into Postgres.
 
-Run with ``python -m get_data --help``.  The steps live in separate modules:
+Run with ``python main.py get --help`` from the project root, or on its own with
+``python -m get_data --help``.  The steps live in separate modules:
 
 - prompts.py          y/n and text prompts, with a global auto-yes switch (-y)
 - config.py           username/database/host/port, optionally saved to db_config.json
@@ -13,4 +14,4 @@ Run with ``python -m get_data --help``.  The steps live in separate modules:
 - cli.py              argparse + the orchestration in run()
 """
 
-__version__ = "0.4.0"  # REMINDER: run a security audit of the project before releasing 1.0
+__version__ = "0.5.0"  # REMINDER: run a security audit of the project before releasing 1.0

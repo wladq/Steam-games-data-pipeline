@@ -122,14 +122,16 @@ def report(constraints: dict[str, tuple[str, str]] | None, checks: list[dict]) -
     return ok and not tally["FAIL"] and not tally["ERROR"]
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+def add_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add the flags of this step; main.py uses it for `python main.py qa`."""
     parser.add_argument("--checks-only", action="store_true",
                         help="run only the read-only queries, do not add constraints")
     add_common_args(parser)
-    args = parser.parse_args()
-    start(args)
 
+
+def run(args: argparse.Namespace) -> int:
+    """Run constraints and checks with parsed arguments; return the exit code."""
+    start(args)
     try:
         engine = open_engine(args)
         try:
@@ -138,7 +140,7 @@ def main() -> int:
             with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
                 if not execute(conn, "SELECT to_regclass('core.games') IS NOT NULL").scalar_one():
                     raise RuntimeError("core.games does not exist. Build the model first: "
-                                       "python model_data/build.py")
+                                       "python main.py model")
                 constraints = None if args.checks_only else run_constraints(conn)
                 checks = run_checks(conn)
         finally:
@@ -155,6 +157,13 @@ def main() -> int:
     log.info("")
     log.info("Data quality: %s", "OK" if ok else "PROBLEMS FOUND (see FAIL / VIOLATED / ERROR above)")
     return 0 if ok else 1
+
+
+def main() -> int:
+    """Entry point of `python qa_data/run_qa.py`."""
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    add_arguments(parser)
+    return run(parser.parse_args())
 
 
 if __name__ == "__main__":

@@ -1,8 +1,8 @@
 -- Normalised model of the Steam games dataset, in its own schema: core.
 --
--- Source : public.games_raw, the CSV landing table loaded by `python load_db.py`
+-- Source : public.games_raw, the CSV landing table loaded by `python main.py get`
 --          (column names tidied to snake_case).
--- Run    : python model_data/build.py
+-- Run    : python main.py model   (or python model_data/build.py)
 --          or  psql -1 -v ON_ERROR_STOP=1 -f 01_schema.sql -f 02_populate.sql
 -- Safe to re-run: the whole schema is dropped and rebuilt in one transaction.
 --

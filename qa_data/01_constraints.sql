@@ -1,6 +1,6 @@
 -- Data-quality rules as CHECK constraints on the core schema.
 --
--- Run : python qa_data/run_qa.py       (reports each constraint as valid or VIOLATED)
+-- Run : python main.py qa              (reports each constraint as valid or VIOLATED)
 --       or statement by statement in psql / DBeaver
 --
 -- Every rule is three statements:

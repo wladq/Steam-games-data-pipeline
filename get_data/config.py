@@ -1,6 +1,7 @@
 """Database connection settings: resolve, and optionally save, everything but the password.
 
-Precedence for each field: command-line flag > db_config.json > keyboard prompt.
+Precedence for each field: command-line flag > db_config.json > keyboard prompt
+(host and port prompts offer localhost and 5433, so Enter keeps the SSH tunnel defaults).
 The password is never written anywhere.  It comes from the PGPASSWORD environment
 variable when set, otherwise from a hidden prompt.
 """
@@ -58,8 +59,8 @@ def resolve_settings(args, config_path: Path) -> tuple[DbSettings, dict]:
 
     username = args.user or saved.get("username") or ask_text("DB username", flag_hint="--user")
     database = args.database or saved.get("database") or ask_text("DB name", flag_hint="--database")
-    host = args.host or saved.get("host") or DEFAULT_HOST
-    port = args.port or saved.get("port") or DEFAULT_PORT
+    host = args.host or saved.get("host") or ask_text("DB host", default=DEFAULT_HOST)
+    port = args.port or saved.get("port") or ask_text("DB port", default=str(DEFAULT_PORT))
     try:
         port = int(port)
     except (TypeError, ValueError):

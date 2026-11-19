@@ -2,7 +2,7 @@
 --
 -- Convention: every query returns the rows that BREAK the rule, so an empty result
 -- means the check passes.  Run one by hand to see the offending rows, or run them
--- all with:  python qa_data/run_qa.py
+-- all with:  python main.py qa
 --
 -- Header lines read by the runner:
 --   check:     unique name

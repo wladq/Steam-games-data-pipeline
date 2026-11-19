@@ -84,7 +84,7 @@ def check_source(conn) -> None:
     )
     if not rows:
         raise RuntimeError(
-            f"public.{SOURCE_TABLE} does not exist. Load the CSV first: python load_db.py"
+            f"public.{SOURCE_TABLE} does not exist. Load the CSV first: python main.py get"
         )
     missing = sorted(REQUIRED_COLUMNS - set(rows))
     if missing:
@@ -132,13 +132,14 @@ def build(engine) -> None:
         log.info("  core.%-16s %10d rows", table, n)
 
 
-def main() -> int:
-    """Run the build process."""
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+def add_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add the flags of this step; main.py uses it for `python main.py model`."""
     add_common_args(parser)
-    args = parser.parse_args()
-    start(args)
 
+
+def run(args: argparse.Namespace) -> int:
+    """Build the core schema with parsed arguments; return the exit code."""
+    start(args)
     try:
         engine = open_engine(args)
         try:
@@ -154,6 +155,13 @@ def main() -> int:
         return 1
     log.info("Done")
     return 0
+
+
+def main() -> int:
+    """Run the build process."""
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    add_arguments(parser)
+    return run(parser.parse_args())
 
 
 if __name__ == "__main__":

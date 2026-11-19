@@ -13,7 +13,7 @@ was wrong with the data on the way in, and how each problem is now caught automa
       ▼
 ┌─ Windows workstation ──────────┐                ┌─ DebianServ (Debian 13 server) ───┐
 │ Python (conda environment)     │   SSH tunnel   │ PostgreSQL 17                     │
-│                                │                │                                   │
+│  main.py       runs every part │                │                                   │
 │  get_data/     download, load ─┼─ localhost ───►│  public.games_raw    CSV landing  │
 │  model_data/   build the model │    :5433       │  public.games_json   JSON landing │
 │  qa_data/      check the model │   encrypted    │  public.game_*       from JSON    │
@@ -41,15 +41,29 @@ was wrong with the data on the way in, and how each problem is now caught automa
 pip install -r requirements.txt
 kaggle auth login                      # once
 
-python load_db.py                      # games.csv  -> public.games_raw
-python load_db.py --json               # games.json -> public.games_json + public.game_* tables
-python model_data/build.py             # public.games_raw -> core.* (normalised model)
-python qa_data/run_qa.py               # constraints + checks, prints a report
-python analyse_data/basic_check.py     # quick look at a table: samples and basic stats
+python main.py                         # asks which part to run, then everything else
+python main.py get                     # games.csv  -> public.games_raw
+python main.py get json                # games.json -> public.games_json + public.game_* tables
+python main.py model                   # public.games_raw -> core.* (normalised model)
+python main.py qa                      # constraints + checks, prints a report
+python main.py analyse                 # quick look at a table: samples and basic stats
+python main.py debug                   # offline tests in tests/, no database needed
 ```
 
-Every script takes `--help`. The loader asks before each change to the data, `-y` answers
-yes to every question, and `--dry-run` checks a file without touching the database.
+`main.py` is the one entry point. Run it without arguments and it asks for the part, then
+for the rest. With arguments, the part comes first, then its parameters. For `get` the order
+is what (`csv` or `json`), where from (`-k OWNER/NAME` or `-l FILE`), where to (`-U -d -H -p`),
+place (`--table`), and behaviour (`-y`, `-v`, `--log-dir`, `--dry-run`):
+
+```
+python main.py get csv -k fronkongames/steam-games-dataset -U <user> -d <database> --table games_raw -y
+```
+
+Anything left out comes from the saved `db_config.json` or is asked. `python main.py -h` and
+`python main.py PART -h` list every option. The loader asks before each change to the data,
+`-y` answers yes to every question, and `--dry-run` checks a file without touching the
+database. The per-folder scripts (`python -m get_data`, `python model_data/build.py`,
+`python qa_data/run_qa.py`, `python analyse_data/basic_check.py`) still work on their own.
 
 ## Data model
 
@@ -131,7 +145,7 @@ Constraints are added as `NOT VALID` and then validated. A rule that existing ro
 reported as a finding, and it still protects every future write. A rule that the source data
 itself breaks is a warning check instead of a constraint: the one game without a name would
 otherwise fail every run, and a run that always fails says nothing. Each check has a severity:
-`error` fails the run, `warn` is only reported. `python qa_data/run_qa.py` prints one line
+`error` fails the run, `warn` is only reported. `python main.py qa` prints one line
 per constraint and per check and exits with code 1 if anything of severity `error` is wrong.
 
 ## Known limitations
@@ -190,5 +204,5 @@ model_data/      SQL that builds the core schema, and build.py to run it
 qa_data/         SQL constraints and checks, and run_qa.py to run them
 analyse_data/    basic_check.py: sample rows and basic statistics of a table
 tests/           check_cleaning.py: offline check of the SQL files and the cleaning patterns
-load_db.py       entry point for the loader
+main.py          one entry point: get, model, qa, analyse, debug
 ```
