@@ -1,4 +1,7 @@
-"""get_data: download the Kaggle Steam games dataset and load it into Postgres.
+"""get_data: the loader of Steam-games-data-pipeline.
+
+Downloads the Kaggle Steam games dataset and loads it into Postgres.  The project's
+name and version live here and are shown by main.py and the dashboard.
 
 Run with ``python main.py get --help`` from the project root, or on its own with
 ``python -m get_data --help``.  The steps live in separate modules:
@@ -14,4 +17,5 @@ Run with ``python main.py get --help`` from the project root, or on its own with
 - cli.py              argparse + the orchestration in run()
 """
 
-__version__ = "0.5.0"  # REMINDER: run a security audit of the project before releasing 1.0
+PROJECT_NAME = "Steam-games-data-pipeline"
+__version__ = "0.6.0"  # REMINDER: run a security audit of the project before releasing 1.0

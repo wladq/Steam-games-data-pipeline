@@ -62,6 +62,7 @@ class PartMocks(unittest.TestCase):
             "model": mock.patch.object(main.build, "run", return_value=0),
             "qa": mock.patch.object(main.run_qa, "run", return_value=0),
             "analyse": mock.patch.object(main.basic_check, "run", return_value=0),
+            "dashboard": mock.patch.object(main.dashboard_export, "run", return_value=0),
             "logging": mock.patch.object(main, "setup_logging"),
             "settings": mock.patch.object(main, "resolve_settings",
                                           return_value=(SETTINGS, {})),
@@ -124,7 +125,7 @@ class ParserTest(unittest.TestCase):
     def test_each_part_has_its_handler(self):
         expected = {"get": main.run_get, "model": main.build.run,
                     "qa": main.run_qa_part, "analyse": main.run_analyse,
-                    "debug": main.run_debug}
+                    "dashboard": main.dashboard_export.run, "debug": main.run_debug}
         for part, handler in expected.items():
             with self.subTest(part=part):
                 self.assertIs(parse([part]).handler, handler)
@@ -150,6 +151,8 @@ class ParameterModeTest(PartMocks):
         run_main(["analyse", "--table", "games_json", "-n", "2"])
         args = self.called_args("analyse")
         self.assertEqual((args.table, args.rows), ("games_json", 2))
+        run_main(["dashboard", "--out", "site"])
+        self.assertEqual(self.called_args("dashboard").out, Path("site"))
 
     def test_exit_code_of_the_part_is_returned(self):
         self.mocks["model"].return_value = 1
@@ -163,7 +166,7 @@ class InteractiveModeTest(PartMocks):
     def test_part_is_asked_first_and_parts_are_listed(self):
         code, prompts, out = run_main([], ["model"])
         self.assertEqual(code, 0)
-        self.assertTrue(prompts[0].startswith("Part (get/model/qa/analyse/debug)"))
+        self.assertTrue(prompts[0].startswith("Part (get/model/qa/analyse/dashboard/debug)"))
         for part in main.PARTS:
             self.assertIn(part, out)
         self.assertTrue(self.called_args("model").interactive)

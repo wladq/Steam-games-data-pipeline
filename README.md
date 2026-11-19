@@ -1,4 +1,6 @@
-# Steam games: from a messy Kaggle export to a checked PostgreSQL model
+# Steam-games-data-pipeline
+
+From a messy Kaggle export to a checked PostgreSQL model.
 
 This project loads the [Steam Games Dataset](https://www.kaggle.com/datasets/fronkongames/steam-games-dataset)
 from Kaggle into PostgreSQL, turns it into a normalised model, and checks the result with
@@ -47,6 +49,7 @@ python main.py get json                # games.json -> public.games_json + publi
 python main.py model                   # public.games_json -> core.* (normalised model)
 python main.py qa                      # constraints + checks, prints a report
 python main.py analyse                 # quick look at a table: samples and basic stats
+python main.py dashboard               # snapshot to docs/: report.md and index.html
 python main.py debug                   # unit tests in tests/, no database needed
 ```
 
@@ -92,6 +95,20 @@ spelling. Language entries carry markup leftovers and get their own cleaning fun
 
 The JSON load also builds a wider set of plain tables in `public` (`games`, `game_tags`,
 `game_packages` with prices per edition, and more). They are independent of `core`.
+
+## Dashboard
+
+[`docs/report.md`](docs/report.md) is a snapshot of the model that GitHub renders in the repo:
+headline numbers, the data-quality state with every check, and tables for prices, release
+years, platforms, tags, genres, languages and review concentration.
+[`docs/index.html`](docs/index.html) shows the same numbers as interactive charts. Open it from
+a local clone, or through GitHub Pages once the repository is public.
+
+`python main.py dashboard` rebuilds both. It only reads: it runs the SELECTs in
+`dashboard/queries.sql` and the QA checks, and writes `docs/report.md`, `docs/index.html` and
+`docs/data/dashboard.json`. The database stays behind the tunnel, so the pages are a snapshot
+that is refreshed by rerunning the command and committing the result. No connection details
+are written to them.
 
 ## The data-quality story
 
@@ -153,7 +170,7 @@ The same question, "is this data right?", is answered at four points.
 
 | Where | How | What it is good for |
 |---|---|---|
-| Offline, without a database | `tests/`: unit tests, run with `python main.py debug` | the command line, the loader steps, the SQL files, and the QA rules tested against known errors |
+| Offline, without a database | `tests/`: unit tests, run with `python main.py debug` | the command line, the loader steps, the SQL files, the dashboard export, and the QA rules tested against known errors |
 | Before loading, in Python | sanity checks in the loader | stops a broken file before it replaces a good table |
 | In the database, permanently | `qa_data/01_constraints.sql`: CHECK constraints, plus keys and foreign keys in the schema | rules that must hold for every row, forever; the database refuses bad writes |
 | In the database, on demand | `qa_data/02_checks.sql`: 29 queries that return the rows breaking a rule | counting problems instead of refusing them, rules across tables, rules that depend on today's date |
@@ -220,6 +237,8 @@ get_data/        loader package: prompts, config, Kaggle download, CSV and JSON 
 model_data/      SQL that builds the core schema, and build.py to run it
 qa_data/         SQL constraints and checks, and run_qa.py to run them
 analyse_data/    basic_check.py: sample rows and basic statistics of a table
+dashboard/       queries.sql, export.py and the chart template; output goes to docs/
+docs/            the generated report.md, index.html and data/dashboard.json
 tests/           unit tests (main.py, loader, SQL files, QA rules), run with python main.py debug
-main.py          one entry point: get, model, qa, analyse, debug
+main.py          one entry point: get, model, qa, analyse, dashboard, debug
 ```

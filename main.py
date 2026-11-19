@@ -1,11 +1,12 @@
-"""One entry point for every step of the Steam games pipeline.
+"""Steam-games-data-pipeline: one entry point for every step.
 
 Interactive:  python main.py            asks which part to run, then everything else
 Parameters:   python main.py PART ...   anything not given is asked or defaulted
 Help:         python main.py -h         and  python main.py PART -h
 
 The parts are the same code as the per-folder scripts (python -m get_data,
-model_data/build.py, qa_data/run_qa.py, analyse_data/basic_check.py, tests/*.py),
+model_data/build.py, qa_data/run_qa.py, analyse_data/basic_check.py,
+dashboard/export.py, tests/*.py),
 which still work on their own.
 """
 
@@ -17,7 +18,8 @@ import sys
 from pathlib import Path
 
 from analyse_data import basic_check
-from get_data import __version__
+from dashboard import export as dashboard_export
+from get_data import PROJECT_NAME, __version__
 from get_data import cli as get_cli
 from get_data.config import resolve_settings
 from get_data.logging_setup import setup_logging
@@ -35,7 +37,8 @@ PARTS = {
     "model": "build the normalised core schema from the JSON landing table",
     "qa": "add the data-quality constraints and run the checks",
     "analyse": "show sample rows and basic statistics of one table",
-    "debug": "run the offline tests in tests/ (no database needed)",
+    "dashboard": "export a snapshot to docs/: report.md for GitHub, index.html with charts",
+    "debug": "run the unit tests in tests/ (no database needed)",
 }
 
 EXAMPLES = f"""\
@@ -46,6 +49,7 @@ examples:
   python main.py model -y
   python main.py qa --checks-only
   python main.py analyse --table games_json -n 3
+  python main.py dashboard
   python main.py debug
 
 The password is never a flag. Set PGPASSWORD to skip the prompt.
@@ -65,18 +69,19 @@ def build_parser() -> argparse.ArgumentParser:
     """Top level: -h, --version and one sub-command per part of processing."""
     parser = argparse.ArgumentParser(
         prog="python main.py",
-        description="Steam games pipeline: get, model, qa, analyse, debug.",
+        description=f"{PROJECT_NAME}: get, model, qa, analyse, dashboard, debug.",
         epilog=EXAMPLES,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--version", action="version",
-                        version=f"%(prog)s {__version__}")
+                        version=f"{PROJECT_NAME} {__version__}")
     parts = parser.add_subparsers(title="part of processing", dest="part",
                                   metavar="PART", required=True)
     add_get_parser(parts)
     add_part(parts, "model", build.add_arguments, build.run)
     add_part(parts, "qa", run_qa.add_arguments, run_qa_part)
     add_part(parts, "analyse", basic_check.add_arguments, run_analyse)
+    add_part(parts, "dashboard", dashboard_export.add_arguments, dashboard_export.run)
     sub = parts.add_parser("debug", help=PARTS["debug"],
                            description=PARTS["debug"].capitalize() + ".")
     sub.add_argument("test", nargs="?", choices=list_tests(),
