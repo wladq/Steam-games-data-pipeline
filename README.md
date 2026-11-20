@@ -2,10 +2,29 @@
 
 From a messy Kaggle export to a checked PostgreSQL model.
 
-This project loads the [Steam Games Dataset](https://www.kaggle.com/datasets/fronkongames/steam-games-dataset)
-from Kaggle into PostgreSQL, turns it into a normalised model, and checks the result with
-SQL constraints and queries. The interesting part is not the loading. It is everything that
-was wrong with the data on the way in, and how each problem is now caught automatically.
+## About
+
+A data-engineering project: the [Steam Games Dataset](https://www.kaggle.com/datasets/fronkongames/steam-games-dataset)
+from Kaggle, loaded into PostgreSQL 17, turned into a normalised model, and checked. The
+interesting part is not the loading. It is everything that was wrong with the data on the
+way in, and how each problem is now caught automatically.
+
+- **Pipeline.** `get` downloads the dataset through the Kaggle API, repairs it and loads it
+  into landing tables, the JSON as `jsonb`. `model` builds the normalised `core` schema in
+  one SQL transaction: 148,909 games with their tags and votes, genres, developers and
+  languages. `qa` adds 14 CHECK constraints and runs 29 check queries. `analyse` profiles
+  the tables, and `dashboard` publishes a Markdown report and an interactive Plotly page.
+- **Data quality.** The data arrives with a shifted CSV header, two files that do not
+  match, keys that change JSON type from game to game, language lists HTML-escaped several
+  times over, and disguised missing values. Each problem is now repaired or reported, and
+  the errors kept as published are flagged as warnings.
+- **Testing.** Offline unit tests cover the command line, the loader, the SQL files and the
+  QA rules. On every push, GitHub Actions runs the whole pipeline on nine made-up games
+  carrying the known problem cases, in a throwaway Postgres container, on Python 3.10 and
+  3.14.
+- **Built with** Python (pandas, SQLAlchemy, psycopg, ijson), PostgreSQL 17 on a Debian home
+  server reached through an SSH tunnel, GitHub Actions and Plotly. The code is licensed
+  under GPLv3; the dataset is under the MIT licence.
 
 ## Architecture
 
