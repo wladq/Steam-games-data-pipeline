@@ -45,7 +45,8 @@ ORDER BY b.sort;
 
 -- query: platforms
 -- about: share of games that run on each platform (a game can run on several)
-SELECT p.platform, p.games, round(100.0 * p.games / t.total, 1) AS percent
+-- percent keeps three decimals: rounding to one would turn 99.955 into 100.0
+SELECT p.platform, p.games, t.total, round(100.0 * p.games / t.total, 3) AS percent
 FROM (
     SELECT 1 AS sort, 'Windows' AS platform, count(*) FILTER (WHERE windows) AS games
     FROM core.games

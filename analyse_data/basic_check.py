@@ -33,6 +33,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))  # so `get_data` imports when run as a script
 
 # pylint: disable=wrong-import-position
+from get_data.formatting import percent
 from get_data.prompts import ask_int, ask_selection
 from get_data.sql_runner import add_common_args, autocommit, execute, run_step
 
@@ -81,17 +82,6 @@ def human(x) -> str:
         if a >= threshold:
             return f"{x / unit:.1f}{suffix}"
     return f"{x:.0f}" if float(x).is_integer() else f"{x:.2f}"
-
-
-def percent(part, whole) -> str:
-    """Share as text that never rounds a partial share to 100 % or a non-zero one to 0 %."""
-    if not whole:
-        return "-"
-    if part == whole:
-        return "100 %"
-    if not part:
-        return "0 %"
-    return f"{min(max(100 * part / whole, 0.1), 99.9):.1f} %"
 
 
 def fit(value, width: int) -> str:

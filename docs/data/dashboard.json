@@ -1118,7 +1118,7 @@
       "skip": 0
     }
   },
-  "generated": "2026-11-19",
-  "version": "0.6.0",
-  "project": "Steam-games-data-pipeline"
+  "generated": "2026-11-20",
+  "project": "Steam-games-data-pipeline",
+  "version": "0.8.0"
 }

@@ -1,6 +1,6 @@
 # Steam-games-data-pipeline: data snapshot
 
-Generated 2026-11-19 from the `core` model (Steam-games-data-pipeline 0.6.0). Interactive charts: [index.html](index.html), opened from a local clone or GitHub Pages. Refresh with `python main.py dashboard`.
+Generated 2026-11-20 from the `core` model (Steam-games-data-pipeline 0.8.0). Interactive charts: [index.html](index.html), opened from a local clone or GitHub Pages. Refresh with `python main.py dashboard`.
 
 ## Headline numbers
 
@@ -118,7 +118,7 @@ A game can run on several platforms, so the shares add up to more than 100 %.
 
 | Platform | Games | Share |
 | --- | ---: | ---: |
-| Windows | 148,842 | 100 % |
+| Windows | 148,842 | 99.9 % |
 | Mac | 25,228 | 16.9 % |
 | Linux | 19,198 | 12.9 % |
 

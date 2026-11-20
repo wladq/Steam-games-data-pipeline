@@ -26,6 +26,7 @@ sys.path.insert(0, str(PROJECT_ROOT))  # so `get_data` imports when run as a scr
 
 # pylint: disable=wrong-import-position
 from get_data import PROJECT_NAME, __version__
+from get_data.formatting import percent
 from get_data.sql_runner import add_common_args, autocommit, execute, read_statements, run_step
 from qa_data import run_qa
 
@@ -141,10 +142,10 @@ def mermaid_pie(title: str, parts: dict[str, int]) -> str:
     return "\n".join(lines + ["```"])
 
 
-def share_at(concentration: list[dict], percent: int):
-    """Percent of all reviews held by the top `percent` percent of games."""
+def share_at(concentration: list[dict], top: int):
+    """Percent of all reviews held by the top `top` percent of games."""
     for row in concentration:
-        if row["top_percent_of_games"] == percent:
+        if row["top_percent_of_games"] == top:
             return row["percent_of_reviews"]
     return None
 
@@ -213,7 +214,7 @@ def render_markdown(data: dict) -> str:  # pylint: disable=too-many-locals
         "A game can run on several platforms, so the shares add up to more than 100 %.",
         "",
         md_table(["Platform", "Games", "Share"],
-                 [[p["platform"], num(p["games"]), f"{p['percent']} %"]
+                 [[p["platform"], num(p["games"]), percent(p["games"], t["games"])]
                   for p in data["platforms"]], "lrr"),
         "",
         "## Top tags by votes",
@@ -262,7 +263,8 @@ def write_outputs(data: dict, out_dir: Path) -> list[Path]:
         out_dir / "data" / "dashboard.json": json.dumps(data, indent=2, ensure_ascii=False),
     }
     for path, text in files.items():
-        path.write_text(text + "\n", encoding="utf-8")
+        # LF on every OS, matching .gitattributes (Windows would otherwise write CRLF)
+        path.write_text(text + "\n", encoding="utf-8", newline="\n")
     return list(files)
 
 

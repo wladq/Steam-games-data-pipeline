@@ -41,7 +41,9 @@ def snapshot() -> dict:
                     "last_release": "2026-11-01"}],
         "releases_per_year": [{"year": 2024, "games": 18000}, {"year": 2025, "games": 9000}],
         "price_bands": [{"band": "Free", "games": 27000}, {"band": "Under $5", "games": 50000}],
-        "platforms": [{"platform": "Windows", "games": 148900, "percent": 100.0}],
+        "platforms": [{"platform": "Windows", "games": 148900, "total": 148909,
+                       "percent": 99.994},
+                      {"platform": "Mac", "games": 25228, "total": 148909, "percent": 16.942}],
         "top_tags": [{"tag": "Indie", "votes": 5000000, "games": 90000},
                      {"tag": "A|B </script><b>", "votes": 10, "games": 1}],
         "top_genres": [{"genre": "Indie", "games": 90000}],
@@ -114,6 +116,10 @@ class MarkdownTest(unittest.TestCase):
         self.assertIn("1 of 1 constraints valid", self.md)
         self.assertIn("1 passed, 1 warnings, 0 failed", self.md)
 
+    def test_an_almost_complete_share_is_not_rounded_to_100(self):
+        self.assertIn("| Windows | 148,900 | 99.9 % |", self.md)
+        self.assertIn("| Mac | 25,228 | 16.9 % |", self.md)
+
     def test_pipe_in_a_name_does_not_break_the_table(self):
         self.assertIn("A\\|B", self.md)
 
@@ -145,6 +151,12 @@ class HtmlTest(unittest.TestCase):
         self.assertNotIn("A|B </script>", self.html)
         self.assertEqual(self.html.count("</script>"), 3)  # Plotly, data block, page code
 
+    def test_shares_on_the_page_use_the_same_rule_as_the_report(self):
+        template = export.TEMPLATE_FILE.read_text(encoding="utf-8")
+        self.assertIn("function pct(part, whole)", template)
+        self.assertIn("Math.min(Math.max(100 * part / whole, 0.1), 99.9)", template)
+        self.assertNotIn("Math.round(100", template)  # plain rounding shows 99.95 % as 100 %
+
     def test_template_without_placeholder_is_an_error(self):
         with self.assertRaises(ValueError):
             export.render_html(self.data, "<html></html>")
@@ -160,6 +172,7 @@ class WriteOutputsTest(unittest.TestCase):
             self.assertEqual(names, ["data/dashboard.json", "index.html", "report.md"])
             for path in paths:
                 self.assertGreater(path.stat().st_size, 100)
+                self.assertNotIn(b"\r\n", path.read_bytes())  # LF, as .gitattributes wants
 
 
 if __name__ == "__main__":

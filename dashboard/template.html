@@ -145,6 +145,15 @@ const fmt = new Intl.NumberFormat("en");
 const compact = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
 const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
 
+// Same rule as percent() in get_data/formatting.py: a partial share never shows as
+// 100 % and a non-zero one never as 0 % (148,842 of 148,909 is 99.9 %, not 100 %).
+function pct(part, whole) {
+  if (!whole) return "-";
+  if (part === whole) return "100 %";
+  if (!part) return "0 %";
+  return `${Math.min(Math.max(100 * part / whole, 0.1), 99.9).toFixed(1)} %`;
+}
+
 // --- small DOM helpers: text always goes in through textContent, never innerHTML ----
 function el(tag, attrs, ...children) {
   const node = document.createElement(tag);
@@ -267,9 +276,12 @@ const CHARTS = [
     id: "platforms", title: "Platforms",
     about: "Share of games that run on each platform. A game can run on several.",
     plot: t => {
+      const labels = DATA.platforms.map(r => pct(r.games, T.games));
       const chart = bars(t, DATA.platforms.map(r => r.platform),
-                         DATA.platforms.map(r => r.percent), "%", v => `${v} %`);
-      chart.traces[0].hovertemplate = "%{y}: %{x} % of games<extra></extra>";
+                         DATA.platforms.map(r => 100 * r.games / T.games), "%",
+                         (v, i) => labels[i]);
+      chart.traces[0].customdata = labels;
+      chart.traces[0].hovertemplate = "%{y}: %{customdata} of games<extra></extra>";
       chart.layout.xaxis.range = [0, 110];
       chart.layout.xaxis.ticksuffix = " %";
       chart.layout.xaxis.tickformat = "";
@@ -277,7 +289,7 @@ const CHARTS = [
     },
     height: 200,
     table: () => table(["Platform", "Games", "Share"],
-                       DATA.platforms.map(r => [r.platform, fmt.format(r.games), `${r.percent} %`]),
+                       DATA.platforms.map(r => [r.platform, fmt.format(r.games), pct(r.games, T.games)]),
                        [0, 1, 1]),
   },
   {
@@ -317,12 +329,12 @@ function freePaid(t) {
   const total = T.free_games + T.paid_games;
   const parts = [["Paid", T.paid_games, t.series1], ["Free", T.free_games, t.series2]];
   const bar = el("div", { class: "segbar", role: "img",
-    "aria-label": parts.map(([n, v]) => `${n}: ${fmt.format(v)} games, ${Math.round(100 * v / total)} %`).join("; ") });
+    "aria-label": parts.map(([n, v]) => `${n}: ${fmt.format(v)} games, ${pct(v, total)}`).join("; ") });
   for (const [name, value, color] of parts) {
-    const pct = Math.round(100 * value / total);
-    const seg = el("div", { class: "segment", title: `${name}: ${fmt.format(value)} games (${pct} %)`,
+    const share = pct(value, total);
+    const seg = el("div", { class: "segment", title: `${name}: ${fmt.format(value)} games (${share})`,
                             style: { background: color, flex: `${value} 1 0` } });
-    seg.textContent = `${pct} %`;
+    seg.textContent = share;
     bar.append(seg);
   }
   const legend = el("div", { class: "legend" },
@@ -404,7 +416,7 @@ function renderStatic() {
     ["Genres", fmt.format(T.genres)], ["Languages", fmt.format(T.languages)],
     ["Reviews", compact.format(T.reviews)],
     ["Free games", compact.format(T.free_games),
-     `${Math.round(100 * T.free_games / (T.free_games + T.paid_games))} % of priced games`],
+     `${pct(T.free_games, T.free_games + T.paid_games)} of priced games`],
   ];
   document.getElementById("tiles").append(...tiles.map(([label, value, note]) =>
     el("div", { class: "panel" }, el("div", { class: "tile-label" }, label),
