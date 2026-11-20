@@ -1,8 +1,12 @@
-"""Command line entry point: argparse, logging, and the step-by-step run.
+"""The get step: its command line, logging, and the step-by-step run.
+
+The flags are defined once, in add_arguments(), and used by both
+`python main.py get` and `python -m get_data`, so the two accept exactly the same
+command line.
 
 Two data paths share the same prompts, flags and logging.  CSV is the default;
 JSON is used when the local file is a .json, when the Kaggle dataset has no CSV
-at all, or when --json asks for it.
+at all, or when `json` is given as the format.
 
   CSV   games.csv  -> header fix -> tidy names -> sanity check -> games_raw
   JSON  games.json -> sanity check + jsonb landing table games_json
@@ -18,76 +22,94 @@ from pathlib import Path
 from . import __version__, json_load
 from .kaggle_download import clear_tmp, download_dataset_file, list_dataset_files, parse_dataset_ref
 from .prompts import PromptError, ask_text, ask_yes_no
-from .sql_runner import guarded, open_engine, start
-from .transform import (GLUED_HEADER, SPLIT_HEADER, fix_shifted_header, header_is_shifted,
-                        read_csv, read_header, sanity_check, tidy_column_names)
+from .sql_runner import add_behaviour_args, add_db_args, guarded, open_engine, start
 
 log = logging.getLogger("get_data")
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 TMP_DIR = PROJECT_ROOT / "tmp"
 CONFIG_PATH = PROJECT_ROOT / "db_config.json"
-DEFAULT_LOG_DIR = PROJECT_ROOT / "logs"
 DEFAULT_DATASET = "fronkongames/steam-games-dataset"
 PREFERRED_FILE = {"csv": "games.csv", "json": "games.json"}
 DEFAULT_TABLE = {"csv": "games_raw", "json": json_load.LANDING_TABLE}
 
+FORMATS = ["csv", "json"]
+DESCRIPTION = "Load the Kaggle Steam games dataset into PostgreSQL."
 EPILOG = f"""\
-examples:
-  python -m get_data                          ask for everything interactively
-  python -m get_data -k {DEFAULT_DATASET} -U wlad -d steam
-  python -m get_data -c path/to/games.json -y local file (JSON by extension), yes to every y/n
-  python -m get_data --json                   take the dataset's JSON file instead of its CSV
-  python -m get_data --dry-run                download and check only, no database
-  python -m get_data --normalise-only         rebuild the normalised tables from {DEFAULT_TABLE['json']}
+examples (python main.py get takes exactly the same):
+  python -m get_data                              ask for everything interactively
+  python -m get_data csv -k {DEFAULT_DATASET} -U me -d steam
+  python -m get_data json -l tmp/games.json -y    local file, yes to every y/n question
+  python -m get_data json                         the dataset's JSON file instead of its CSV
+  python -m get_data --dry-run                    download and check only, no database
+  python -m get_data --normalise-only             rebuild schema staging from {DEFAULT_TABLE['json']}
 
 The password is never a flag. Set PGPASSWORD to skip the prompt.
 Connection settings can be saved to {CONFIG_PATH.name}; delete it to forget them.
 """
 
 
-# --- setup -------------------------------------------------------------------
+# --- command line ----------------------------------------------------------------
+
+def usage(prog: str, manual: bool = False) -> str:
+    """The usage line in the documented order: what, where from, where to, place, behaviour.
+
+    argparse would list the format word last, so the line is written out by hand.
+    """
+    indent = " " * (len("usage: ") + len(prog) + 1)
+    lines = [f"{prog} [-h]{' [-m]' if manual else ''} [{{csv,json}}]",
+             "[-k OWNER/NAME | -l FILE] [-f NAME]",
+             "[-U USER] [-d DATABASE] [-H HOST] [-p PORT]",
+             "[--table TABLE] [--normalise-only]",
+             "[-y] [-v] [--log-dir LOG_DIR] [--dry-run]"]
+    return ("\n" + indent).join(lines)
+
+
+def add_arguments(parser: argparse.ArgumentParser) -> None:
+    """The get flags, in order: what, where from, where to, place, behaviour.
+
+    The only definition of the loader's command line: main.py uses it for
+    `python main.py get`, and main() below for `python -m get_data`.
+    """
+    what = parser.add_argument_group("what")
+    what.add_argument("what", nargs="?", choices=FORMATS,
+                      help="data format (default: csv, or json when the file is "
+                           ".json or the dataset has no CSV)")
+
+    source = parser.add_argument_group("where from (asked when neither is given)")
+    one = source.add_mutually_exclusive_group()
+    one.add_argument("-k", "--kaggle", metavar="OWNER/NAME",
+                     help=f"Kaggle dataset, e.g. {DEFAULT_DATASET}")
+    one.add_argument("-l", "--local", dest="local_file", type=Path, metavar="FILE",
+                     help="local .csv or .json file instead of a download")
+    source.add_argument("-f", "--file", metavar="NAME",
+                        help="exact file to take from the Kaggle dataset")
+
+    add_db_args(parser, "where to (flag > saved config > prompt)")
+
+    place = parser.add_argument_group("place")
+    place.add_argument("--table",
+                       help=f"target table (default: {DEFAULT_TABLE['csv']} for CSV, "
+                            f"{DEFAULT_TABLE['json']} for JSON)")
+    place.add_argument("--normalise-only", action="store_true",
+                       help="skip loading; rebuild the tables in schema staging from the "
+                            "existing JSON landing table")
+
+    behaviour = add_behaviour_args(parser)
+    behaviour.add_argument("--dry-run", action="store_true",
+                           help="get, fix and check the data, but do not touch the database")
+
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(
-        prog="python -m get_data",
-        description="Load the Kaggle Steam games dataset into Postgres.",
-        epilog=EPILOG,
+    """The parser of `python -m get_data`: the same flags as `python main.py get`."""
+    parser = argparse.ArgumentParser(
+        prog="python -m get_data", usage=usage("python -m get_data"),
+        description=DESCRIPTION, epilog=EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    src = p.add_argument_group("data source (asked interactively if neither is given)")
-    one = src.add_mutually_exclusive_group()
-    one.add_argument("-k", "--kaggle", metavar="OWNER/NAME",
-                     help=f"Kaggle dataset as owner/name or URL, e.g. {DEFAULT_DATASET}")
-    one.add_argument("-c", "--csv", "--local", dest="local_file", type=Path, metavar="FILE",
-                     help="use this local file instead of downloading (.json is loaded as JSON)")
-    src.add_argument("-f", "--file", help="exact file to take from the Kaggle dataset "
-                                          "(default: its CSV, or its JSON if it has no CSV)")
-    src.add_argument("-j", "--json", action="store_true",
-                     help="take the Kaggle dataset's JSON file even when it also has a CSV")
-
-    db = p.add_argument_group("database (flag > saved config > prompt)")
-    db.add_argument("-U", "--user", help="database username")
-    db.add_argument("-d", "--database", help="database name")
-    db.add_argument("-H", "--host", help="database host (default: localhost)")
-    db.add_argument("-p", "--port", type=int, help="database port (default: 5433)")
-    db.add_argument("--table", help=f"target table (default: {DEFAULT_TABLE['csv']} for CSV, "
-                                    f"landing table {DEFAULT_TABLE['json']} for JSON)")
-    db.add_argument("--normalise-only", action="store_true",
-                    help="skip download and loading; rebuild the tables in schema staging "
-                         "from the existing JSON landing table")
-
-    run = p.add_argument_group("behaviour")
-    run.add_argument("-y", "--yes", action="store_true",
-                     help="answer yes to every y/n question (text values still need flags or prompts)")
-    run.add_argument("--dry-run", action="store_true",
-                     help="get, fix and check the data, but do not touch the database")
-    run.add_argument("-v", "--verbose", action="store_true", help="show debug messages on screen")
-    run.add_argument("--log-dir", type=Path, default=DEFAULT_LOG_DIR,
-                     help=f"folder for info.log and debug.log, both anonymised "
-                          f"(default: {DEFAULT_LOG_DIR.name}/, git-ignored)")
-    p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    return p
+    add_arguments(parser)
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    return parser
 
 
 # --- data source ---------------------------------------------------------------
@@ -192,23 +214,28 @@ def step_cleanup(used: Path | None) -> None:
 
 
 # --- CSV steps -----------------------------------------------------------------
+# transform imports pandas, which takes most of a second to load; it is imported in
+# these steps only, so `python main.py --help` and the other parts start instantly.
+# pylint: disable=import-outside-toplevel
 
 def step_fix_header(csv_path: Path):
     """Read the CSV, offering to repair the shifted 'DiscountDLC count' header first."""
-    columns = read_header(csv_path)
-    if not header_is_shifted(columns):
-        log.info("Header check: no shifted header found, reading the file as is")
-        return read_csv(csv_path)
+    from . import transform
 
-    log.warning("Header check: '%s' is two names glued together, so every column after it is shifted",
-                GLUED_HEADER)
-    if ask_yes_no(f"Fix the header by splitting it into {SPLIT_HEADER}?"):
-        df = read_csv(csv_path, names=fix_shifted_header(columns))
+    columns = transform.read_header(csv_path)
+    if not transform.header_is_shifted(columns):
+        log.info("Header check: no shifted header found, reading the file as is")
+        return transform.read_csv(csv_path)
+
+    log.warning("Header check: '%s' is two names glued together, so every column after it "
+                "is shifted", transform.GLUED_HEADER)
+    if ask_yes_no(f"Fix the header by splitting it into {transform.SPLIT_HEADER}?"):
+        df = transform.read_csv(csv_path, names=transform.fix_shifted_header(columns))
         log.info("Header fixed")
         return df
 
     log.warning("Header left as is. The sanity check will most likely stop the run")
-    return read_csv(csv_path)
+    return transform.read_csv(csv_path)
 
 
 def step_tidy_columns(df):
@@ -217,8 +244,10 @@ def step_tidy_columns(df):
         log.info("Keeping the original column names")
         return df
 
+    from . import transform
+
     log.info("Shape before tidying: %s", df.shape)
-    tidied, changes = tidy_column_names(df)
+    tidied, changes = transform.tidy_column_names(df)
     log.info("Shape after tidying:  %s", tidied.shape)
     if not changes:
         log.info("All column names are already tidy")
@@ -237,7 +266,10 @@ def step_tidy_columns(df):
 
 
 def step_sanity_check(df) -> str:
-    summary = sanity_check(df)
+    """Stop on a broken file; log what passed; return the appid column's name."""
+    from . import transform
+
+    summary = transform.sanity_check(df)
     blanks = summary["blank_discounts"]
     log.info("Sanity check passed: %d rows x %d columns, every appid is numeric and unique, "
              "every discount is within 0-100%s",
@@ -245,20 +277,17 @@ def step_sanity_check(df) -> str:
     return summary["appid_column"]
 
 
-def run_csv(args, csv_path: Path, table: str) -> None:
-    from .db import upload_with_primary_key
+def run_csv(csv_path: Path, table: str, engine) -> None:
+    """Repair, tidy and check the CSV, then upload it; engine is None on a dry run."""
+    from .db import upload_with_primary_key  # pylint: disable=import-outside-toplevel
 
     df = step_fix_header(csv_path)
     df = step_tidy_columns(df)
     pk_column = step_sanity_check(df)
-    if args.dry_run:
+    if engine is None:
         log.info("Dry run: skipping the database upload")
         return
-    engine = connect(args)
-    try:
-        upload_with_primary_key(df, engine, table, pk_column)
-    finally:
-        engine.dispose()
+    upload_with_primary_key(df, engine, table, pk_column)
 
 
 # --- JSON steps ----------------------------------------------------------------
@@ -284,21 +313,17 @@ def step_normalise(engine, landing_table: str) -> None:
         log.info("Kept the old copies in %s", old)
 
 
-def run_json(args, json_path: Path, table: str) -> None:
-    if args.dry_run:
+def run_json(json_path: Path, table: str, engine) -> None:
+    """Check and load the JSON, then offer the staging tables; engine is None on a dry run."""
+    if engine is None:
         inv = json_load.scan(json_path)
         inv.log_summary()
         log.info("Dry run: skipping the database upload")
         return
-
-    engine = connect(args)
-    try:
-        # sanity check and landing load happen in one pass; any failure rolls everything back
-        inv = json_load.load_landing(json_path, engine, table)
-        inv.log_summary()
-        step_normalise(engine, table)
-    finally:
-        engine.dispose()
+    # sanity check and landing load happen in one pass; any failure rolls everything back
+    inv = json_load.load_landing(json_path, engine, table)
+    inv.log_summary()
+    step_normalise(engine, table)
 
 
 def run_normalise_only(args) -> None:
@@ -316,19 +341,27 @@ def run_normalise_only(args) -> None:
 # --- main --------------------------------------------------------------------
 
 def run(args, state: dict) -> None:
+    """Get the file, then load it as CSV or JSON."""
     if args.normalise_only:
         run_normalise_only(args)
         return
 
-    path = step_get_file(args)
-    state["used"] = path  # cleanup looks at this, even if a later step fails
-    fmt = data_format(path)
-    table = args.table or DEFAULT_TABLE[fmt]
-    log.info("Format: %s -> table %s", fmt.upper(), table)
-    if fmt == "json":
-        run_json(args, path, table)
-    else:
-        run_csv(args, path, table)
+    # Connect first, except on a dry run: a wrong password or a dead tunnel then shows
+    # up before minutes of downloading and repairing a 400 MB file, not after them.
+    engine = None if args.dry_run else connect(args)
+    try:
+        path = step_get_file(args)
+        state["used"] = path  # cleanup looks at this, even if a later step fails
+        fmt = data_format(path)
+        table = args.table or DEFAULT_TABLE[fmt]
+        log.info("Format: %s -> table %s", fmt.upper(), table)
+        if fmt == "json":
+            run_json(path, table, engine)
+        else:
+            run_csv(path, table, engine)
+    finally:
+        if engine is not None:
+            engine.dispose()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -337,12 +370,10 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def run_cli(args) -> int:
-    """Run the loader with parsed arguments, from this module's parser or from main.py.
+    """Run the loader with parsed arguments, from `python -m get_data` or main.py.
 
-    ``args.what`` is 'csv', 'json' or None (CSV unless the file or dataset is JSON only);
-    this module's own parser sets it through --json.
+    ``args.what`` is 'csv', 'json' or None (CSV unless the file or dataset is JSON only).
     """
-    args.what = getattr(args, "what", None) or ("json" if getattr(args, "json", False) else None)
     start(args)
     log.debug("get_data %s started with %s", __version__, vars(args))
 

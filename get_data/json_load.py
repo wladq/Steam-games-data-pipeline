@@ -25,11 +25,19 @@ import logging
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterator
+from typing import TYPE_CHECKING, Any, Iterator
 
-from sqlalchemy import Engine, text
+if TYPE_CHECKING:
+    from sqlalchemy import Engine
 
 log = logging.getLogger(__name__)
+
+
+def text(sql: str):
+    """sqlalchemy.text, imported on first use: SQLAlchemy takes half a second to load,
+    which `python main.py --help` should not pay just because this module is imported."""
+    from sqlalchemy import text as sa_text  # pylint: disable=import-outside-toplevel
+    return sa_text(sql)
 
 LANDING_TABLE = "games_json"
 STAGING_SCHEMA = "staging"

@@ -74,8 +74,11 @@ python main.py get csv -k fronkongames/steam-games-dataset -U <user> -d <databas
 Anything left out comes from the saved `db_config.json` or is asked. `python main.py -h` and
 `python main.py PART -h` list every option. The loader asks before each change to the data,
 `-y` answers yes to every question, and `--dry-run` checks a file without touching the
-database. The per-folder scripts (`python -m get_data`, `python model_data/build.py`,
-`python qa_data/run_qa.py`, `python analyse_data/basic_check.py`) still work on their own.
+database. Without `--dry-run` the loader connects first, so a wrong password or a stopped
+tunnel shows up before the download, not after it. The per-folder scripts (`python -m get_data`, `python model_data/build.py`,
+`python qa_data/run_qa.py`, `python analyse_data/basic_check.py`) still work on their own;
+`python -m get_data` takes exactly the same parameters as `python main.py get`, because both
+read them from one definition in `get_data/cli.py`.
 
 `analyse` is the companion of `qa`: where `qa` checks rules, `analyse` describes what is
 there. For every table of a schema (`core` by default, `--schema public` for the landing
@@ -243,6 +246,11 @@ per constraint and per check and exits with code 1 if anything of severity `erro
 - **Tag positions are ranks by votes**, not the order Steam shows, because jsonb does not
   keep the key order of an object.
 - **Dates given as month and year** are stored as the first day of that month.
+- **Rebuilds delete whatever depends on what they replace.** `model` drops the whole `core`
+  schema (`DROP SCHEMA core CASCADE`), and the loader replaces its landing table and the
+  `staging` tables (and, when asked, their old copies in `public`) with `DROP TABLE … CASCADE`.
+  A view or table of your own built on top of them is deleted with them, without a warning.
+  Keep such objects in a schema of their own and recreate them after a rebuild.
 - **Log anonymisation is pattern based.** It is a safety net, not a guarantee.
 
 ## Logs and privacy

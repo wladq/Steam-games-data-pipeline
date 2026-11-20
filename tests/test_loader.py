@@ -128,15 +128,68 @@ class StepGetFileTest(TempDirTest):
             cli.step_get_file(self.args(self.tmp / "nope.csv"))
 
 
-class PackageCliTest(unittest.TestCase):
-    """python -m get_data --json still means 'take the JSON file'."""
+class ConnectFirstTest(unittest.TestCase):
+    """The loader connects before getting the file, except on a dry run."""
 
-    def test_json_flag_sets_the_format(self):
-        args = cli.build_parser().parse_args(["--json", "--dry-run"])
-        with mock.patch.object(cli, "start"), \
-                mock.patch.object(cli, "run") as run:
-            self.assertEqual(cli.run_cli(args), 0)
+    def run_loader(self, dry_run):
+        """Run cli.run with every step mocked; return (calls in order, engine)."""
+        calls, engine = [], mock.Mock(name="engine")
+        args = argparse.Namespace(normalise_only=False, dry_run=dry_run, table=None, what=None)
+        with mock.patch.object(cli, "connect",
+                               side_effect=lambda _a: calls.append("connect") or engine), \
+                mock.patch.object(cli, "step_get_file",
+                                  side_effect=lambda _a: calls.append("get file")
+                                  or Path("tmp/games.csv")), \
+                mock.patch.object(cli, "run_csv",
+                                  side_effect=lambda _p, _t, e: calls.append(("load", e))):
+            cli.run(args, {"used": None})
+        return calls, engine
+
+    def test_password_comes_before_the_download(self):
+        calls, engine = self.run_loader(dry_run=False)
+        self.assertEqual(calls, ["connect", "get file", ("load", engine)])
+        engine.dispose.assert_called_once()
+
+    def test_dry_run_never_connects(self):
+        calls, _ = self.run_loader(dry_run=True)
+        self.assertEqual(calls, ["get file", ("load", None)])
+
+
+class OneCommandLineTest(unittest.TestCase):
+    """python -m get_data and python main.py get share one definition of their flags."""
+
+    ARGV = ["json", "-k", "owner/name", "-f", "games.json", "-U", "me", "-d", "steam",
+            "-H", "DebianServ", "-p", "5432", "--table", "landing", "-y", "-v", "--dry-run"]
+
+    @staticmethod
+    def parse(parser, argv):
+        """Parse quietly; argparse errors raise SystemExit."""
+        with contextlib.redirect_stderr(io.StringIO()):
+            return vars(parser.parse_args(argv))
+
+    def test_both_entry_points_parse_into_the_same_fields(self):
+        import main  # pylint: disable=import-outside-toplevel
+        package = self.parse(cli.build_parser(), self.ARGV)
+        via_main = self.parse(main.build_parser(), ["get", *self.ARGV])
+        for only_main in ("part", "handler", "manual"):
+            via_main.pop(only_main)
+        self.assertEqual(package, via_main)
+
+    def test_the_old_conflicting_flags_are_gone(self):
+        for argv in (["-c", "games.csv"], ["--csv", "games.csv"], ["--json"], ["-j"]):
+            with self.subTest(argv=argv), self.assertRaises(SystemExit):
+                self.parse(cli.build_parser(), argv)
+
+    def test_the_format_word_reaches_the_loader(self):
+        with mock.patch.object(cli, "start"), mock.patch.object(cli, "run") as run:
+            self.assertEqual(cli.main(["json", "--dry-run"]), 0)
         self.assertEqual(run.call_args.args[0].what, "json")
+
+    def test_usage_shows_the_format_first_and_lines_line_up(self):
+        lines = cli.usage("python -m get_data").splitlines()
+        self.assertEqual(lines[0], "python -m get_data [-h] [{csv,json}]")
+        self.assertTrue(lines[1].startswith(" " * len("usage: python -m get_data ") + "[-k"))
+        self.assertIn("[-h] [-m] [{csv,json}]", cli.usage("python main.py get", manual=True))
 
 
 class AskChoiceTest(unittest.TestCase):

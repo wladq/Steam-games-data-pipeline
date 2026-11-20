@@ -25,13 +25,11 @@ from get_data import cli as get_cli
 from get_data.config import resolve_settings
 from get_data.logging_setup import setup_logging
 from get_data.prompts import PromptError, ask_choice, ask_text, ask_yes_no
-from get_data.sql_runner import add_behaviour_args, add_db_args
 from model_data import build
 from qa_data import run_qa
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 TESTS_DIR = PROJECT_ROOT / "tests"
-FORMATS = ["csv", "json"]
 
 PARTS = {
     "get": "download or read games.csv / games.json and load it into PostgreSQL",
@@ -58,13 +56,6 @@ The password is never a flag. Set PGPASSWORD to skip the prompt.
 """
 
 MANUAL_HELP = "ask this part's questions step by step, as when it is chosen from the menu"
-
-GET_USAGE = """\
-python main.py get [-h] [-m] [{csv,json}]
-                          [-k OWNER/NAME | -l FILE] [-f NAME]
-                          [-U USER] [-d DATABASE] [-H HOST] [-p PORT]
-                          [--table TABLE] [--normalise-only]
-                          [-y] [-v] [--log-dir LOG_DIR] [--dry-run]"""
 
 
 # --- parser ------------------------------------------------------------------------
@@ -111,41 +102,14 @@ def add_part(parts, name: str, add_arguments, handler) -> None:
 
 
 def add_get_parser(parts) -> None:
-    """The get part, in order: what, where from, where to, place, behaviour."""
+    """The get part; its flags are defined once, in get_data/cli.py."""
     sub = parts.add_parser(
-        "get", help=PARTS["get"], usage=GET_USAGE,
-        description="Load the Kaggle Steam games dataset into PostgreSQL.",
+        "get", help=PARTS["get"], usage=get_cli.usage("python main.py get", manual=True),
+        description=get_cli.DESCRIPTION,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     add_manual(sub)
-    what = sub.add_argument_group("what")
-    what.add_argument("what", nargs="?", choices=FORMATS,
-                      help="data format (default: csv, or json when the file is "
-                           ".json or the dataset has no CSV)")
-
-    source = sub.add_argument_group("where from (asked when neither is given)")
-    one = source.add_mutually_exclusive_group()
-    one.add_argument("-k", "--kaggle", metavar="OWNER/NAME",
-                     help=f"Kaggle dataset, e.g. {get_cli.DEFAULT_DATASET}")
-    one.add_argument("-l", "--local", dest="local_file", type=Path, metavar="FILE",
-                     help="local .csv or .json file instead of a download")
-    source.add_argument("-f", "--file", metavar="NAME",
-                        help="exact file to take from the Kaggle dataset")
-
-    add_db_args(sub, "where to (flag > saved config > prompt)")
-
-    place = sub.add_argument_group("place")
-    place.add_argument("--table",
-                       help=f"target table (default: {get_cli.DEFAULT_TABLE['csv']} "
-                            f"for CSV, {get_cli.DEFAULT_TABLE['json']} for JSON)")
-    place.add_argument("--normalise-only", action="store_true",
-                       help="skip loading; rebuild the tables in schema staging from "
-                            "the existing JSON landing table")
-
-    behaviour = add_behaviour_args(sub)
-    behaviour.add_argument("--dry-run", action="store_true",
-                           help="get, fix and check the data, but do not touch "
-                                "the database")
+    get_cli.add_arguments(sub)
     sub.set_defaults(handler=run_get)
 
 
@@ -170,7 +134,7 @@ def ask_part() -> str:
 
 def ask_get_details(args: argparse.Namespace) -> None:
     """Ask in the same order as the parameters: what, where from, where to, place."""
-    args.what = ask_choice("What to load", FORMATS, default="csv")
+    args.what = ask_choice("What to load", get_cli.FORMATS, default="csv")
     kind, value = get_cli.classify_source(
         ask_text(get_cli.SOURCE_QUESTION, default=get_cli.DEFAULT_DATASET))
     if kind == "local":

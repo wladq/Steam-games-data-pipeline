@@ -27,8 +27,6 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from sqlalchemy import text
-
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))  # so `get_data` imports when run as a script
 
@@ -38,6 +36,12 @@ from get_data.prompts import ask_int, ask_selection
 from get_data.sql_runner import add_common_args, autocommit, execute, run_step
 
 log = logging.getLogger("analyse_data")
+
+
+def text(sql: str):
+    """sqlalchemy.text, imported on first use so that loading this module stays fast."""
+    from sqlalchemy import text as sa_text  # pylint: disable=import-outside-toplevel
+    return sa_text(sql)
 
 DEFAULT_SCHEMA = "core"
 DEFAULT_ROWS = 3

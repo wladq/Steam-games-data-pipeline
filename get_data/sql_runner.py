@@ -15,12 +15,14 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-
-from sqlalchemy import Connection, Engine
+from typing import TYPE_CHECKING
 
 from .config import offer_to_save, resolve_settings
 from .logging_setup import DEBUG_LOG, register_connection, setup_logging
 from .prompts import set_auto_yes
+
+if TYPE_CHECKING:  # type hints only: importing SQLAlchemy at startup costs half a second
+    from sqlalchemy import Connection, Engine
 
 log = logging.getLogger(__name__)
 

@@ -31,12 +31,14 @@ classifiers = [
     # PyPI rejects every upload with a 'Private ::' classifier, so this cannot be published by mistake
     "Private :: Do Not Upload",
 ]
+# Each range stops before the next major version, whose breaking changes have not been
+# tried; developed with pandas 3.0, SQLAlchemy 2.0, psycopg 3.3, kaggle 2.2, ijson 3.6.
 dependencies = [
-    "pandas >= 2.2",
-    "SQLAlchemy >= 2.0",
-    "psycopg[binary] >= 3.1",
-    "kaggle >= 1.7",
-    "ijson >= 3.2",  # streams games.json one game at a time
+    "pandas >= 2.2, < 4",
+    "SQLAlchemy >= 2.0, < 3",
+    "psycopg[binary] >= 3.1, < 4",
+    "kaggle >= 1.7, < 3",
+    "ijson >= 3.2, < 4",  # streams games.json one game at a time
 ]
 
 [project.urls]

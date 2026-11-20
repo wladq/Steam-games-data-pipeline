@@ -70,8 +70,10 @@ def make_engine(settings: DbSettings, password: str) -> Engine:
         port=settings.port,
         database=settings.database,
     )
-    # connect_timeout keeps a dead tunnel / unreachable host from hanging for minutes
-    return create_engine(url, connect_args={"connect_timeout": 10})
+    # connect_timeout keeps a dead tunnel / unreachable host from hanging for minutes;
+    # pool_pre_ping replaces a pooled connection that died while the loader spent minutes
+    # downloading and repairing the file after connecting
+    return create_engine(url, pool_pre_ping=True, connect_args={"connect_timeout": 10})
 
 
 def test_connection(engine: Engine) -> str:

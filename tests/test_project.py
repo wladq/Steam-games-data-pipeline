@@ -1,7 +1,7 @@
 """Unit tests of the project metadata: pyproject.toml agrees with the code.
 
 - the name matches PROJECT_NAME, and the version is read from get_data/__init__.py
-- the dependencies match requirements.txt
+- the dependencies match requirements.txt, each with an upper bound
 - every folder listed for the wheel exists, and the package cannot reach PyPI
 - the licence is GPL-3.0-only and LICENSE holds its text
 
@@ -61,6 +61,11 @@ class PyprojectTest(unittest.TestCase):
         lines = (ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()
         listed = {requirement(line) for line in lines if requirement(line)}
         self.assertEqual({requirement(d) for d in self.project["dependencies"]}, listed)
+
+    def test_every_dependency_stops_before_the_next_major_version(self):
+        for dependency in self.project["dependencies"]:
+            with self.subTest(dependency=dependency):
+                self.assertRegex(requirement(dependency), r">=[\d.]+,<\d+$")
 
     def test_wheel_folders_exist(self):
         for folder in self.data["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"]:

@@ -1,8 +1,9 @@
 # Same list as [project] dependencies in pyproject.toml; keep the two in step.
-# pip install -r requirements.txt   or   pip install -e .
-pandas>=2.2
-SQLAlchemy>=2.0
-psycopg[binary]>=3.1
-kaggle>=1.7
+# pip install -r requirements.txt   (installing with pip install -e . waits until 1.0)
+# Each range stops before the next major version, whose breaking changes have not been tried.
+pandas>=2.2,<4
+SQLAlchemy>=2.0,<3
+psycopg[binary]>=3.1,<4
+kaggle>=1.7,<3
 # streams games.json one game at a time (required for the JSON path)
-ijson>=3.2
+ijson>=3.2,<4

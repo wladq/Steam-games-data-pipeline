@@ -11,6 +11,7 @@ Run:  python main.py debug                 (every test in tests/)
 import contextlib
 import io
 import re
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -271,6 +272,18 @@ class InteractiveModeTest(PartMocks):
         with mock.patch("builtins.input", side_effect=KeyboardInterrupt), \
                 contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(main.main([]), 130)
+
+
+class StartupTest(unittest.TestCase):
+    """--help and --version stay instant: importing main.py loads no heavy library."""
+
+    def test_pandas_and_sqlalchemy_wait_until_a_step_needs_them(self):
+        # a fresh interpreter: this test process has already imported both
+        probe = ("import sys; import main; "
+                 "print(sorted(m for m in ('pandas', 'numpy', 'sqlalchemy') if m in sys.modules))")
+        result = subprocess.run([sys.executable, "-c", probe], cwd=ROOT, capture_output=True,
+                                text=True, check=True)
+        self.assertEqual(result.stdout.strip(), "[]")
 
 
 class DebugTest(unittest.TestCase):

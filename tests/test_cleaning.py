@@ -7,7 +7,8 @@
   flag clean names; their patterns are read from qa_data/02_checks.sql itself
 
 Run:  python main.py debug                 (every test in tests/)
-      python tests/check_cleaning.py       (this file only)
+      python tests/test_cleaning.py        (this file only)
+      python -m unittest discover tests    (every test, without main.py)
 
 The Python copy of the cleaning only approximates PostgreSQL's regular expressions;
 the real test is `python main.py model` followed by `python main.py qa`.
