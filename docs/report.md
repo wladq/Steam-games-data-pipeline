@@ -1,6 +1,6 @@
 # Steam-games-data-pipeline: data snapshot
 
-Generated 2026-11-20 from the `core` model (Steam-games-data-pipeline 0.8.0). Interactive charts: [index.html](index.html), opened from a local clone or GitHub Pages. Refresh with `python main.py dashboard`.
+Generated 2026-11-20 from the `core` model (Steam-games-data-pipeline 1.0.0). Interactive charts: [index.html](index.html), opened from a local clone or GitHub Pages. Refresh with `python main.py dashboard`.
 
 ## Headline numbers
 

@@ -169,17 +169,20 @@
     {
       "platform": "Windows",
       "games": 148842,
-      "percent": 100
+      "total": 148909,
+      "percent": 99.955
     },
     {
       "platform": "Mac",
       "games": 25228,
-      "percent": 16.9
+      "total": 148909,
+      "percent": 16.942
     },
     {
       "platform": "Linux",
       "games": 19198,
-      "percent": 12.9
+      "total": 148909,
+      "percent": 12.892
     }
   ],
   "top_tags": [
@@ -1120,5 +1123,5 @@
   },
   "generated": "2026-11-20",
   "project": "Steam-games-data-pipeline",
-  "version": "0.8.0"
+  "version": "1.0.0"
 }
