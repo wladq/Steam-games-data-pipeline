@@ -20,11 +20,10 @@ from pathlib import Path
 from typing import ClassVar
 from unittest import mock
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
-# pylint: disable=wrong-import-position
 import main
 from get_data.config import DbSettings
+
+ROOT = Path(__file__).resolve().parent.parent
 
 SETTINGS = DbSettings(username="me", database="steam", host="localhost", port=5433)
 

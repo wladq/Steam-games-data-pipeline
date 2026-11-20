@@ -24,15 +24,15 @@ from pathlib import Path
 from typing import ClassVar
 from unittest import mock
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
-# pylint: disable=wrong-import-position,protected-access
 from sqlalchemy.exc import OperationalError
 
 from get_data import cli, db, json_load, kaggle_download
 from get_data.config import DbSettings, resolve_settings
 from get_data.prompts import ask_choice, ask_int, ask_many, ask_one
 from get_data.transform import read_csv
+
+# pylint: disable=protected-access
+ROOT = Path(__file__).resolve().parent.parent
 
 BOTH = [("games.csv", 401_000_000), ("games.json", 1_008_000_000)]
 JSON_ONLY = [("games.json", 1_008_000_000)]

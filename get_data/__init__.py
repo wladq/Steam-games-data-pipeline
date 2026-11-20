@@ -8,17 +8,17 @@ Run with ``python main.py get --help`` from the project root, or on its own with
 ``python -m get_data --help``.  The steps live in separate modules:
 
 - prompts.py          y/n and text prompts, with a global auto-yes switch (-y)
+- paths.py            where settings, logs, downloads and dashboard output live: in the
+                      clone, or in the user's data folder when installed with pip install .
 - config.py           username/database/host/port, optionally saved to db_config.json
 - kaggle_download.py  fetch one dataset file into the project tmp/ folder
 - transform.py        header repair, snake_case column names, sanity check
 - db.py               engine, connection test, upload, primary key (CSV path)
-- json_load.py        games.json -> jsonb landing table + normalised tables (JSON path, --json)
+- json_load.py        games.json -> jsonb landing table + staging tables (the format word json)
 - logging_setup.py    console + info.log + debug.log, with personal details redacted in the files
 - sql_runner.py       shared helpers for model_data/ and qa_data/: connect, split and run .sql files
 - cli.py              argparse + the orchestration in run()
 """
 
 PROJECT_NAME = "Steam-games-data-pipeline"
-# REMINDER before releasing 1.0: run a security audit of the project, and test installing
-# it as a package (pip install -e . with pyproject.toml, then python main.py --version)
-__version__ = "0.9.0"
+__version__ = "1.0.0"

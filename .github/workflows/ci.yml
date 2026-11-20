@@ -1,6 +1,7 @@
-# On every push: the unit tests, then the whole pipeline on tests/data/games_sample.json
-# in a throwaway Postgres 17 container (the server runs 17 too), then tests that read the
-# result back.  This tests the real SQL without the 1 GB download.
+# On every push: the install (pip install -e .), the unit tests, then the whole pipeline
+# on tests/data/games_sample.json in a throwaway Postgres 17 container (the server runs
+# 17 too), then tests that read the result back.  This tests the real SQL without the
+# 1 GB download.
 #
 # The password is a throwaway for this container only.  -y answers every y/n question;
 # that is safe here because the checkout is fresh and tmp/ is never touched (the input
@@ -58,9 +59,17 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
           cache: pip
+          cache-dependency-path: pyproject.toml
 
-      - name: Install the dependencies
-        run: python -m pip install -r requirements.txt
+      - name: Install the project, editable, as the README says
+        run: python -m pip install -e .
+
+      - name: Check the installed package from outside the repository
+        working-directory: ${{ runner.temp }}
+        run: |
+          python -m pip check
+          python -c "import importlib.metadata as m; print(m.version('Steam-games-data-pipeline'))"
+          python -m get_data --version
 
       - name: Unit tests (offline; the database tests skip themselves here)
         run: python -m unittest discover tests

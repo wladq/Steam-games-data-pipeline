@@ -20,10 +20,9 @@ import sys
 import unittest
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
-# pylint: disable=wrong-import-position
 from get_data.sql_runner import read_statements
+
+ROOT = Path(__file__).resolve().parent.parent
 
 SQL_FILES = (
     "model_data/01_schema.sql",

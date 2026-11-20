@@ -1,11 +1,16 @@
 # Packaging metadata, written after
 # https://packaging.python.org/en/latest/guides/writing-pyproject-toml/
 #
-#   pip install -e .                  dependencies, and the packages importable from anywhere
+# The project runs from a clone of the repository.  Install it once, inside the clone:
+#
+#   pip install -e .                  the dependencies, and the packages importable from anywhere
 #   pip install -e . --group dev      also the lint tools (pip 25.1 or newer)
 #
-# Installing as a package is not tested yet; that is planned before version 1.0.
-# Until then: pip install -r requirements.txt, then run from the repository: python main.py
+# Tested on Python 3.14 on 20 November 2026 (both installs, then every unit test), and by
+# the CI workflow on Python 3.10 and 3.14 on every push.  A regular pip install . works
+# too: settings, logs, downloads and the dashboard then go to the user's local data folder
+# (see get_data/paths.py) instead of the clone, and main.py is not installed, so the parts
+# run as python -m get_data, python -m model_data.build, python -m qa_data.run_qa, ...
 
 [build-system]
 requires = ["hatchling >= 1.26"]
@@ -22,7 +27,7 @@ requires-python = ">=3.10"
 authors = [{ name = "Wladyslaw" }]
 keywords = ["steam", "kaggle", "postgresql", "jsonb", "data pipeline", "data quality", "etl"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",

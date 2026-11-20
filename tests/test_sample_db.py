@@ -29,13 +29,11 @@ from pathlib import Path
 
 from sqlalchemy import create_engine, text
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
-# pylint: disable=wrong-import-position
 from get_data import json_load
 from get_data.sql_runner import autocommit, execute, read_statements
 from qa_data import run_qa
 
+ROOT = Path(__file__).resolve().parent.parent
 SAMPLE = ROOT / "tests" / "data" / "games_sample.json"
 SAMPLE_DB_URL = os.environ.get("SAMPLE_DB_URL")
 

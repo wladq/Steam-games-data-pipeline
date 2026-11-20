@@ -19,7 +19,7 @@ import argparse
 import logging
 from pathlib import Path
 
-from . import __version__, json_load
+from . import __version__, json_load, paths
 from .kaggle_download import (
     _make_api,
     clear_tmp,
@@ -33,9 +33,9 @@ from .sql_runner import add_behaviour_args, add_db_args, guarded, open_engine, s
 
 log = logging.getLogger("get_data")
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-TMP_DIR = PROJECT_ROOT / "tmp"
-CONFIG_PATH = PROJECT_ROOT / "db_config.json"
+DATA_ROOT = paths.DATA_ROOT  # the clone, or the user's data folder when installed
+TMP_DIR = paths.TMP_DIR
+CONFIG_PATH = paths.CONFIG_PATH
 DEFAULT_DATASET = "fronkongames/steam-games-dataset"
 PREFERRED_FILE = {"csv": "games.csv", "json": "games.json"}
 DEFAULT_TABLE = {"csv": "games_raw", "json": json_load.LANDING_TABLE}
@@ -242,7 +242,7 @@ def _from_kaggle(dataset: str, args) -> Path:
     file_name = plain_file_name(_choose_kaggle_file(list_dataset_files(dataset, api), args))
     target = TMP_DIR / file_name
     if target.is_file() and ask_yes_no(
-        f"{target.relative_to(PROJECT_ROOT)} is left over from an earlier run. "
+        f"{target.relative_to(DATA_ROOT)} is left over from an earlier run. "
         "Reuse it instead of downloading?"
     ):
         return target
@@ -271,7 +271,7 @@ def step_cleanup(used: Path | None) -> None:
         return
     size_mb = sum(f.stat().st_size for f in TMP_DIR.rglob("*") if f.is_file()) / 1e6
     if ask_yes_no(f"Delete the downloaded files in tmp/ ({size_mb:.1f} MB)?"):
-        clear_tmp(TMP_DIR, PROJECT_ROOT)
+        clear_tmp(TMP_DIR, DATA_ROOT)
     else:
         log.info("Kept tmp/ (it is git-ignored and will be offered for reuse next run)")
 

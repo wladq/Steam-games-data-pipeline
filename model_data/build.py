@@ -1,8 +1,9 @@
 """Build the normalised `core` schema from the JSON landing table public.games_json.
 
-Run from the project root:
+Run from the project root (python main.py model does the same):
     python model_data/build.py          # asks before dropping an existing core schema
     python model_data/build.py -y       # no questions
+Running this file directly needs the project installed once: pip install -e .
 
 Runs every .sql file in this folder, in name order, inside ONE transaction: if any
 statement fails, the previous core schema is left exactly as it was.
@@ -10,13 +11,8 @@ statement fails, the previous core schema is left exactly as it was.
 
 import argparse
 import logging
-import sys
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parent))  # so `get_data` imports when run as a script
-
-# pylint: disable=wrong-import-position
 from get_data.prompts import ask_yes_no
 from get_data.sql_runner import (
     add_common_args,
@@ -26,6 +22,7 @@ from get_data.sql_runner import (
     run_step,
 )
 
+HERE = Path(__file__).resolve().parent
 log = logging.getLogger("model_data")
 
 SOURCE_TABLE = "games_json"

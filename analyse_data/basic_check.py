@@ -7,7 +7,9 @@ Run from the project root:
     python main.py analyse --table games,tags -n 5      # two tables of core, 5 random rows
     python main.py analyse --table public.games_json    # schema.table works too
     python main.py analyse --sample-from games          # random rows from games only
-    python analyse_data/basic_check.py ...              # the same without main.py
+    python analyse_data/basic_check.py ...              # the same without main.py, once
+                                                        # the project is installed:
+                                                        # pip install -e .
 
 Built like qa_data/run_qa.py: the same connection flags and prompts, the same logging
 (console plus the anonymised logs/info.log and logs/debug.log), read-only, and the same
@@ -23,14 +25,8 @@ import json
 import logging
 import re
 import shutil
-import sys
 from dataclasses import dataclass
-from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parent))  # so `get_data` imports when run as a script
-
-# pylint: disable=wrong-import-position
 from get_data.formatting import percent
 from get_data.prompts import ask_int, ask_many, ask_one
 from get_data.sql_runner import (

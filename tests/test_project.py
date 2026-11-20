@@ -1,7 +1,8 @@
 """Unit tests of the project metadata: pyproject.toml agrees with the code.
 
 - the name matches PROJECT_NAME, and the version is read from get_data/__init__.py
-- the dependencies match requirements.txt, each with an upper bound
+- pyproject.toml is the one list of dependencies, each with an upper bound, and Ruff's
+  range in the dev group matches the version [tool.ruff] requires
 - every folder listed for the wheel exists, and the package cannot reach PyPI
 - the licence is GPL-3.0-only and LICENSE holds its text
 
@@ -14,10 +15,9 @@ import sys
 import unittest
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
-# pylint: disable=wrong-import-position
 from get_data import PROJECT_NAME, __version__
+
+ROOT = Path(__file__).resolve().parent.parent
 
 try:
     import tomllib  # Python 3.11+
@@ -58,10 +58,16 @@ class PyprojectTest(unittest.TestCase):
                           re.MULTILINE)
         self.assertEqual(found.group(1), __version__)
 
-    def test_dependencies_match_requirements_txt(self):
-        lines = (ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()
-        listed = {requirement(line) for line in lines if requirement(line)}
-        self.assertEqual({requirement(d) for d in self.project["dependencies"]}, listed)
+    def test_pyproject_is_the_one_dependency_list(self):
+        # pip install -e . installs from pyproject.toml; a second list would drift
+        self.assertFalse((ROOT / "requirements.txt").exists())
+
+    def test_ruff_range_matches_the_required_version(self):
+        ruff = [d for d in self.data["dependency-groups"]["dev"] if d.startswith("ruff")]
+        self.assertEqual(len(ruff), 1)
+        ranges = {requirement(ruff[0]).removeprefix("ruff"),
+                  requirement(self.data["tool"]["ruff"]["required-version"])}
+        self.assertEqual(len(ranges), 1, ranges)
 
     def test_every_dependency_stops_before_the_next_major_version(self):
         for dependency in self.project["dependencies"]:

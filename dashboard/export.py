@@ -1,7 +1,8 @@
 """Export a snapshot of the core model to docs/: a Markdown report and a chart page.
 
 Run from the project root:
-    python main.py dashboard                 (or python dashboard/export.py)
+    python main.py dashboard                 (or python dashboard/export.py, which needs
+                                              the project installed: pip install -e .)
 
 Read-only.  Runs the SELECTs in queries.sql and the QA checks, then writes:
     docs/report.md             tables and a pie chart that GitHub renders in the repo
@@ -17,16 +18,11 @@ import datetime as dt
 import decimal
 import json
 import logging
-import sys
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-PROJECT_ROOT = HERE.parent
-sys.path.insert(0, str(PROJECT_ROOT))  # so `get_data` imports when run as a script
-
-# pylint: disable=wrong-import-position
 from get_data import PROJECT_NAME, __version__
 from get_data.formatting import percent
+from get_data.paths import DASHBOARD_DIR
 from get_data.sql_runner import (
     add_common_args,
     autocommit,
@@ -37,11 +33,12 @@ from get_data.sql_runner import (
 )
 from qa_data import run_qa
 
+HERE = Path(__file__).resolve().parent
 log = logging.getLogger("dashboard")
 
 QUERIES_FILE = HERE / "queries.sql"
 TEMPLATE_FILE = HERE / "template.html"
-DEFAULT_OUT = PROJECT_ROOT / "docs"
+DEFAULT_OUT = DASHBOARD_DIR  # docs/ in the clone, or in the user's data folder when installed
 DATA_PLACEHOLDER = "__DASHBOARD_DATA__"
 STATUS_ICON = {"pass": "✅ pass", "warn": "⚠️ warn", "FAIL": "❌ FAIL",
                "ERROR": "❌ ERROR", "skip": "⏭️ skip"}
@@ -280,7 +277,8 @@ def write_outputs(data: dict, out_dir: Path) -> list[Path]:
 def add_arguments(parser: argparse.ArgumentParser) -> None:
     """Add the flags of this step; main.py uses it for `python main.py dashboard`."""
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT,
-                        help="folder for report.md, index.html and data/ (default: docs/)")
+                        help="folder for report.md, index.html and data/ "
+                             "(default: %(default)s)")
     add_common_args(parser)
 
 

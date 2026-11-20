@@ -21,10 +21,9 @@ from unittest import mock
 
 from sqlalchemy.dialects import postgresql
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
-# pylint: disable=wrong-import-position
 from analyse_data import basic_check as bc
+
+ROOT = Path(__file__).resolve().parent.parent
 
 QUOTE = postgresql.dialect().identifier_preparer.quote
 COLUMNS = [

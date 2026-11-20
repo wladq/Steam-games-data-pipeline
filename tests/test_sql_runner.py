@@ -15,11 +15,10 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
-# pylint: disable=wrong-import-position
 from get_data import db, sql_runner
 from get_data.config import DbSettings
+
+ROOT = Path(__file__).resolve().parent.parent
 
 LOGGER = "get_data.sql_runner"
 

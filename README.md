@@ -57,13 +57,23 @@ way in, and how each problem is now caught automatically.
   (once with `PGPASSWORD`), and no password is asked at all when nothing answers at the
   host and port, for example when the tunnel is down. User, host and database name live in a git-ignored
   `db_config.json`. Downloads go to a git-ignored `tmp/` folder.
+- **Installed instead of cloned** (`pip install .` without `-e`), the project keeps the same
+  files, the logs and the dashboard output in the user's local data folder, never next to
+  the installed code: `%LOCALAPPDATA%\Steam-games-data-pipeline` on Windows (not the roaming
+  profile), `~/Library/Application Support/Steam-games-data-pipeline` on macOS and
+  `~/.local/share/Steam-games-data-pipeline` on Linux. `main.py` exists only in a clone; an
+  installed copy runs its parts as `python -m get_data`, `python -m model_data.build` and so on.
 
 ## How to run it
 
-Needs Python 3.10 or newer (developed on 3.15) and PostgreSQL 17.
+Needs Python 3.10 or newer (developed on 3.15) and PostgreSQL 17. On Windows, pip cannot yet
+install one dependency for Python 3.15 (`pyyaml`, used by the Kaggle client): use 3.14, or a
+conda environment, which ships it.
 
 ```
-pip install -r requirements.txt
+git clone https://github.com/wladq/Steam-games-data-pipeline.git
+cd Steam-games-data-pipeline
+pip install -e .                       # once: the dependencies and the project itself
 kaggle auth login                      # once
 
 python main.py                         # asks which part to run, then everything else
@@ -94,8 +104,9 @@ Anything left out comes from the saved `db_config.json` or is asked. `python mai
 `python main.py PART -h` list every option. The loader asks before each change to the data,
 `-y` answers yes to every question, and `--dry-run` checks a file without touching the
 database. Without `--dry-run` the loader connects first, so a wrong password or a stopped
-tunnel shows up before the download, not after it. The per-folder scripts (`python -m get_data`, `python model_data/build.py`,
-`python qa_data/run_qa.py`, `python analyse_data/basic_check.py`) still work on their own;
+tunnel shows up before the download, not after it. After `pip install -e .` the per-folder
+scripts work on their own too (`python -m get_data`, `python model_data/build.py`,
+`python qa_data/run_qa.py`, `python analyse_data/basic_check.py`);
 `python -m get_data` takes exactly the same parameters as `python main.py get`, because both
 read them from one definition in `get_data/cli.py`.
 

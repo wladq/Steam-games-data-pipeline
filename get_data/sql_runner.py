@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from . import paths
 from .config import offer_to_save, resolve_settings
 from .logging_setup import DEBUG_LOG, register_connection, setup_logging
 from .prompts import set_auto_yes
@@ -27,9 +28,8 @@ if TYPE_CHECKING:  # type hints only: importing SQLAlchemy at startup costs half
 
 log = logging.getLogger(__name__)
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-CONFIG_PATH = PROJECT_ROOT / "db_config.json"
-DEFAULT_LOG_DIR = PROJECT_ROOT / "logs"
+CONFIG_PATH = paths.CONFIG_PATH  # in the clone, or in the user's data folder when installed
+DEFAULT_LOG_DIR = paths.LOG_DIR
 
 _DOLLAR_TAG = re.compile(r"\$[A-Za-z_]*\$")
 _META = re.compile(r"^([a-z_]+):\s*(.+)$")
@@ -56,7 +56,7 @@ def add_behaviour_args(parser: argparse.ArgumentParser, title: str = "behaviour"
     group.add_argument("-v", "--verbose", action="store_true",
                        help="show debug messages on screen")
     group.add_argument("--log-dir", type=Path, default=DEFAULT_LOG_DIR,
-                       help="folder for info.log and debug.log (default: logs/)")
+                       help="folder for info.log and debug.log (default: %(default)s)")
     return group
 
 

@@ -91,5 +91,6 @@ def offer_to_save(settings: DbSettings, saved: dict, config_path: Path) -> None:
                 "(password is not saved)")
     if not ask_yes_no(question, default=False):
         return
+    config_path.parent.mkdir(parents=True, exist_ok=True)  # an installed copy's data folder
     config_path.write_text(json.dumps(current, indent=2) + "\n", encoding="utf-8")
     log.info("Saved connection settings to %s (git-ignored)", config_path)

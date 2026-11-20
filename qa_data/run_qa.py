@@ -1,8 +1,9 @@
 """Run the data-quality constraints and checks against the core schema and print a report.
 
-Run from the project root:
+Run from the project root (python main.py qa does the same):
     python qa_data/run_qa.py                 # constraints, then checks
     python qa_data/run_qa.py --checks-only   # read-only: skips the ALTER TABLE statements
+Running this file directly needs the project installed once: pip install -e .
 
 Exit code 0 when every constraint is valid and no check of severity 'error' fails;
 1 otherwise.  Checks of severity 'warn' are reported but never fail the run.
@@ -11,13 +12,8 @@ Exit code 0 when every constraint is valid and no check of severity 'error' fail
 import argparse
 import logging
 import re
-import sys
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parent))  # so `get_data` imports when run as a script
-
-# pylint: disable=wrong-import-position
 from get_data.sql_runner import (
     add_common_args,
     autocommit,
@@ -27,6 +23,7 @@ from get_data.sql_runner import (
     run_step,
 )
 
+HERE = Path(__file__).resolve().parent
 log = logging.getLogger("qa_data")
 
 CONSTRAINTS_FILE = HERE / "01_constraints.sql"
