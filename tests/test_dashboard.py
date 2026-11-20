@@ -157,6 +157,12 @@ class HtmlTest(unittest.TestCase):
         self.assertIn("Math.min(Math.max(100 * part / whole, 0.1), 99.9)", template)
         self.assertNotIn("Math.round(100", template)  # plain rounding shows 99.95 % as 100 %
 
+    def test_plotly_is_pinned_by_an_integrity_hash(self):
+        template = export.TEMPLATE_FILE.read_text(encoding="utf-8")
+        tag = re.search(r"<script src=\"https://cdn\.plot\.ly/[^\"]+\"[^>]*>", template).group(0)
+        self.assertRegex(tag, r'integrity="sha384-[A-Za-z0-9+/]{64}"')
+        self.assertIn('crossorigin="anonymous"', tag)  # without it the hash check fails
+
     def test_template_without_placeholder_is_an_error(self):
         with self.assertRaises(ValueError):
             export.render_html(self.data, "<html></html>")

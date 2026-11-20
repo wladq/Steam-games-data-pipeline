@@ -26,6 +26,7 @@ from .kaggle_download import (
     download_dataset_file,
     list_dataset_files,
     parse_dataset_ref,
+    plain_file_name,
 )
 from .prompts import PromptError, ask_text, ask_yes_no
 from .sql_runner import add_behaviour_args, add_db_args, guarded, open_engine, start
@@ -238,7 +239,7 @@ def _choose_kaggle_file(files: list[tuple[str, int]], args) -> str:
 
 def _from_kaggle(dataset: str, args) -> Path:
     api = _make_api()  # one authenticated client for listing and download
-    file_name = _choose_kaggle_file(list_dataset_files(dataset, api), args)
+    file_name = plain_file_name(_choose_kaggle_file(list_dataset_files(dataset, api), args))
     target = TMP_DIR / file_name
     if target.is_file() and ask_yes_no(
         f"{target.relative_to(PROJECT_ROOT)} is left over from an earlier run. "

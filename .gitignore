@@ -5,6 +5,11 @@ __pycache__/
 .venv/
 venv/
 
+# Packaging output (pip install -e ., python -m build)
+build/
+dist/
+*.egg-info/
+
 # Editor
 .vscode/
 .idea/

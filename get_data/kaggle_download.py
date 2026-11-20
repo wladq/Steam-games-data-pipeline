@@ -35,6 +35,14 @@ def parse_dataset_ref(text: str) -> str:
     return f"{match['owner']}/{match['name']}"
 
 
+def plain_file_name(name: str) -> str:
+    """`name` itself when it is a bare file name.  Anything that could point outside the
+    download folder ('../x', 'data/x.csv', an absolute path) raises a ValueError."""
+    if name in ("", ".", "..") or "/" in name or "\\" in name or Path(name).name != name:
+        raise ValueError(f"Refusing the file name {name!r}: not a plain file name")
+    return name
+
+
 def _make_api():
     # Import the class, not the package: `import kaggle` authenticates at import
     # time and prints a help wall when no credentials exist.  Imported here so the
@@ -86,6 +94,7 @@ def list_dataset_files(dataset: str, api=None) -> list[tuple[str, int]]:
 
 def download_dataset_file(dataset: str, file_name: str, dest_dir: Path, api=None) -> Path:
     """Download `file_name` from `dataset` into `dest_dir` and return the local path."""
+    plain_file_name(file_name)  # before anything is created or asked
     dest_dir.mkdir(parents=True, exist_ok=True)
     api = api or _make_api()
     log.info("Downloading %s from kaggle.com/datasets/%s into %s ...", file_name, dataset, dest_dir)

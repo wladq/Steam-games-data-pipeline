@@ -29,7 +29,7 @@ sys.path.insert(0, str(ROOT))
 # pylint: disable=wrong-import-position,protected-access
 from sqlalchemy.exc import OperationalError
 
-from get_data import cli, db, json_load
+from get_data import cli, db, json_load, kaggle_download
 from get_data.config import DbSettings, resolve_settings
 from get_data.prompts import ask_choice, ask_int, ask_many, ask_one
 from get_data.transform import read_csv
@@ -52,6 +52,29 @@ class TempDirTest(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+
+class PlainFileNameTest(TempDirTest):
+    """A file name from the Kaggle listing cannot point outside tmp/."""
+
+    def test_plain_names_pass(self):
+        for name in ("games.json", "games.csv", "Steam games 2026.csv"):
+            with self.subTest(name=name):
+                self.assertEqual(kaggle_download.plain_file_name(name), name)
+
+    def test_names_with_folders_are_refused(self):
+        for name in ("../games.json", "data/games.csv", "..\\games.json", "/etc/passwd",
+                     "C:\\Windows\\x.csv", "..", ".", ""):
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                kaggle_download.plain_file_name(name)
+
+    def test_download_refuses_before_creating_or_asking(self):
+        api = mock.Mock()
+        dest = self.tmp / "not_created"
+        with self.assertRaises(ValueError):
+            kaggle_download.download_dataset_file("owner/name", "../x.csv", dest, api)
+        api.dataset_download_file.assert_not_called()
+        self.assertFalse(dest.exists())
 
 
 class ClassifySourceTest(TempDirTest):
