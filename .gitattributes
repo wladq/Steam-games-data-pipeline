@@ -1,0 +1,3 @@
+# Keep LF line endings in the repository and in every working copy, on Windows too.
+# This overrides core.autocrlf, so git no longer warns "LF will be replaced by CRLF".
+* text=auto eol=lf

@@ -18,7 +18,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))  # so `get_data` imports when run as a script
 
 # pylint: disable=wrong-import-position
-from get_data.sql_runner import add_common_args, execute, open_engine, read_statements, start
+from get_data.sql_runner import add_common_args, autocommit, execute, read_statements, run_step
 
 log = logging.getLogger("qa_data")
 
@@ -142,32 +142,22 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
 
 def run(args: argparse.Namespace) -> int:
     """Run constraints and checks with parsed arguments; return the exit code."""
-    start(args)
-    try:
-        engine = open_engine(args)
-        try:
-            # autocommit: every statement stands alone, so one violated constraint
-            # or broken check cannot roll back or block the others
-            with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
-                if not execute(conn, "SELECT to_regclass('core.games') IS NOT NULL").scalar_one():
-                    raise RuntimeError("core.games does not exist. Build the model first: "
-                                       "python main.py model")
-                constraints = None if args.checks_only else run_constraints(conn)
-                checks = run_checks(conn)
-        finally:
-            engine.dispose()
-    except KeyboardInterrupt:
-        log.error("Interrupted")
-        return 130
-    except Exception as exc:  # pylint: disable=broad-except
-        log.error("%s", exc)
-        log.debug("Traceback:", exc_info=True)
-        return 1
 
-    ok = report(constraints, checks)
-    log.info("")
-    log.info("Data quality: %s", "OK" if ok else "PROBLEMS FOUND (see FAIL / VIOLATED / ERROR above)")
-    return 0 if ok else 1
+    def work(engine):
+        # autocommit: one violated constraint or broken check cannot block the others
+        with autocommit(engine) as conn:
+            if not execute(conn, "SELECT to_regclass('core.games') IS NOT NULL").scalar_one():
+                raise RuntimeError("core.games does not exist. Build the model first: "
+                                   "python main.py model")
+            constraints = None if args.checks_only else run_constraints(conn)
+            checks = run_checks(conn)
+        ok = report(constraints, checks)
+        log.info("")
+        log.info("Data quality: %s",
+                 "OK" if ok else "PROBLEMS FOUND (see FAIL / VIOLATED / ERROR above)")
+        return 0 if ok else 1
+
+    return run_step(args, work, log)
 
 
 def main() -> int:

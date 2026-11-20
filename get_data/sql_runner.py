@@ -1,6 +1,8 @@
-"""Shared helpers for main.py and the SQL folders (model_data/, qa_data/).
+"""Shared helpers for every step: get, model, qa, analyse, dashboard.
 
-- common command-line flags, logging and connection, identical to the loader
+- common command-line flags, logging and connection
+- the frame every step runs in: run_step / guarded turn the step's work into an exit
+  code (0 done, 1 error with the traceback in debug.log, 130 interrupted)
 - split a .sql file into statements, keeping each statement's leading comments
 - execute raw SQL without any parameter parsing, so '%' and ':' are literal
 """
@@ -10,13 +12,14 @@ from __future__ import annotations
 import argparse
 import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from sqlalchemy import Connection, Engine
 
-from .config import resolve_settings
-from .logging_setup import register_connection, setup_logging
+from .config import offer_to_save, resolve_settings
+from .logging_setup import DEBUG_LOG, register_connection, setup_logging
 from .prompts import set_auto_yes
 
 log = logging.getLogger(__name__)
@@ -67,15 +70,75 @@ def start(args: argparse.Namespace) -> None:
     set_auto_yes(args.yes)
 
 
-def open_engine(args: argparse.Namespace) -> Engine:
-    """Resolve the settings, then connect with up to three password attempts."""
+def open_engine(args: argparse.Namespace, offer_save: bool = False) -> Engine:
+    """Resolve the settings, then connect with up to three password attempts.
+
+    With offer_save, settings that differ from db_config.json are offered for saving
+    after the connection works (the loader does this).  The caller disposes the engine.
+    """
     from .db import connect_engine  # pylint: disable=import-outside-toplevel
 
-    settings, _ = resolve_settings(args, CONFIG_PATH)
+    settings, saved = resolve_settings(args, CONFIG_PATH)
     log.info("Connecting to %s ...", settings.describe())
     engine, version = connect_engine(settings)
-    log.info("Connected: %s", version)
+    try:
+        log.info("Connected: %s", version)
+        if offer_save:
+            offer_to_save(settings, saved, CONFIG_PATH)
+    except BaseException:
+        engine.dispose()
+        raise
     return engine
+
+
+def autocommit(engine: Engine) -> Connection:
+    """A connection where every statement stands alone (use it in a with block).
+
+    One failing query then cannot abort the ones after it, which the read-only steps
+    rely on when they keep going after a broken check or table.
+    """
+    return engine.connect().execution_options(isolation_level="AUTOCOMMIT")
+
+
+# --- the frame every step runs in -------------------------------------------------
+
+def guarded(work: Callable[[], int | None], logger: logging.Logger | None = None,
+            log_dir: Path | None = None) -> int:
+    """Run work() and turn the outcome into an exit code.
+
+    work's own return value (None counts as 0), 130 on Ctrl+C, or 1 on any other
+    error: its message is logged, the traceback goes to debug.log, and with log_dir
+    a hint says where to find it.
+    """
+    logger = logger or log
+    try:
+        code = work()
+    except KeyboardInterrupt:
+        logger.error("Interrupted")
+        return 130
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.error("%s", exc)
+        logger.debug("Traceback:", exc_info=True)
+        if log_dir:
+            logger.info("Details in %s", log_dir / DEBUG_LOG)
+        return 1
+    return 0 if code is None else int(code)
+
+
+def run_step(args: argparse.Namespace, work: Callable[[Engine], int | None],
+             logger: logging.Logger | None = None) -> int:
+    """The whole frame of a database step: logging and auto-yes from args, a
+    connection, work(engine), the engine closed again, and an exit code."""
+    start(args)
+
+    def with_engine():
+        engine = open_engine(args)
+        try:
+            return work(engine)
+        finally:
+            engine.dispose()
+
+    return guarded(with_engine, logger, args.log_dir)
 
 
 # --- SQL files -------------------------------------------------------------------

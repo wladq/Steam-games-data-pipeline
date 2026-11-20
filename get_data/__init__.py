@@ -21,4 +21,4 @@ Run with ``python main.py get --help`` from the project root, or on its own with
 PROJECT_NAME = "Steam-games-data-pipeline"
 # REMINDER before releasing 1.0: run a security audit of the project, and test installing
 # it as a package (pip install -e . with pyproject.toml, then python main.py --version)
-__version__ = "0.7.1"
+__version__ = "0.8.0"

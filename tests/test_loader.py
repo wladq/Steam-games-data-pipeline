@@ -133,7 +133,7 @@ class PackageCliTest(unittest.TestCase):
 
     def test_json_flag_sets_the_format(self):
         args = cli.build_parser().parse_args(["--json", "--dry-run"])
-        with mock.patch.object(cli, "setup_logging"), \
+        with mock.patch.object(cli, "start"), \
                 mock.patch.object(cli, "run") as run:
             self.assertEqual(cli.run_cli(args), 0)
         self.assertEqual(run.call_args.args[0].what, "json")

@@ -21,9 +21,8 @@ from get_data.prompts import ask_yes_no
 from get_data.sql_runner import (
     add_common_args,
     execute,
-    open_engine,
     read_statements,
-    start,
+    run_step,
 )
 
 log = logging.getLogger("model_data")
@@ -110,22 +109,12 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
 
 def run(args: argparse.Namespace) -> int:
     """Build the core schema with parsed arguments; return the exit code."""
-    start(args)
-    try:
-        engine = open_engine(args)
-        try:
-            build(engine)
-        finally:
-            engine.dispose()
-    except KeyboardInterrupt:
-        log.error("Interrupted")
-        return 130
-    except Exception as exc:  # pylint: disable=broad-except
-        log.error("%s", exc)
-        log.debug("Traceback:", exc_info=True)
-        return 1
-    log.info("Done")
-    return 0
+
+    def work(engine):
+        build(engine)
+        log.info("Done")
+
+    return run_step(args, work, log)
 
 
 def main() -> int:

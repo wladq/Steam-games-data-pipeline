@@ -34,7 +34,7 @@ sys.path.insert(0, str(HERE.parent))  # so `get_data` imports when run as a scri
 
 # pylint: disable=wrong-import-position
 from get_data.prompts import ask_int, ask_selection
-from get_data.sql_runner import add_common_args, execute, open_engine, start
+from get_data.sql_runner import add_common_args, autocommit, execute, run_step
 
 log = logging.getLogger("analyse_data")
 
@@ -370,37 +370,32 @@ def run(args: argparse.Namespace) -> int:
     In an interactive run (python main.py, then 'analyse') the questions come after
     connecting, so that they can list the schemas and tables that exist.
     """
-    start(args)
+
+    def work(engine):
+        quote = engine.dialect.identifier_preparer.quote
+        # autocommit: a failing query must not abort the tables that follow it
+        with autocommit(engine) as conn:
+            if getattr(args, "interactive", False):
+                choose_interactively(conn, args)
+            pairs = targets(conn, args)
+            sampled = sample_set(args, pairs)
+            reports = [profile_or_error(conn, schema, table,
+                                        args.rows if (schema, table) in sampled else 0, quote)
+                       for schema, table in pairs]
+        return 0 if summary(reports) else 1
+
+    return run_step(args, work, log)
+
+
+def profile_or_error(conn, schema: str, table: str, rows: int, quote) -> TableReport:
+    """profile_table, but a failure becomes an ERROR report and the next table still runs."""
     try:
-        engine = open_engine(args)
-        try:
-            quote = engine.dialect.identifier_preparer.quote
-            # autocommit: a failing query must not abort the tables that follow it
-            with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
-                if getattr(args, "interactive", False):
-                    choose_interactively(conn, args)
-                pairs = targets(conn, args)
-                sampled = sample_set(args, pairs)
-                reports = []
-                for schema, table in pairs:
-                    rows = args.rows if (schema, table) in sampled else 0
-                    try:
-                        reports.append(profile_table(conn, schema, table, rows, quote))
-                    except Exception as exc:  # pylint: disable=broad-except
-                        detail = str(getattr(exc, "orig", exc)).strip().splitlines()[0]
-                        log.error("%s.%s: %s", schema, table, detail)
-                        log.debug("Traceback:", exc_info=True)
-                        reports.append(TableReport(f"{schema}.{table}", "ERROR", detail=detail))
-        finally:
-            engine.dispose()
-    except KeyboardInterrupt:
-        log.error("Interrupted")
-        return 130
+        return profile_table(conn, schema, table, rows, quote)
     except Exception as exc:  # pylint: disable=broad-except
-        log.error("%s", exc)
+        detail = str(getattr(exc, "orig", exc)).strip().splitlines()[0]
+        log.error("%s.%s: %s", schema, table, detail)
         log.debug("Traceback:", exc_info=True)
-        return 1
-    return 0 if summary(reports) else 1
+        return TableReport(f"{schema}.{table}", "ERROR", detail=detail)
 
 
 def main() -> int:

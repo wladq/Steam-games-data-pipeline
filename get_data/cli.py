@@ -16,10 +16,9 @@ import logging
 from pathlib import Path
 
 from . import __version__, json_load
-from .config import offer_to_save, resolve_settings
 from .kaggle_download import clear_tmp, download_dataset_file, list_dataset_files, parse_dataset_ref
-from .logging_setup import DEBUG_LOG, register_connection, setup_logging
-from .prompts import PromptError, ask_text, ask_yes_no, set_auto_yes
+from .prompts import PromptError, ask_text, ask_yes_no
+from .sql_runner import guarded, open_engine, start
 from .transform import (GLUED_HEADER, SPLIT_HEADER, fix_shifted_header, header_is_shifted,
                         read_csv, read_header, sanity_check, tidy_column_names)
 
@@ -174,19 +173,9 @@ def data_format(path: Path) -> str:
 # --- shared steps --------------------------------------------------------------
 
 def connect(args):
-    """Resolve settings, connect with up to three password attempts.  Caller disposes the engine."""
-    from .db import connect_engine
-
-    settings, saved = resolve_settings(args, CONFIG_PATH)
-    log.info("Connecting to %s ...", settings.describe())
-    engine, version = connect_engine(settings)
-    try:
-        log.info("Connected: %s", version)
-        offer_to_save(settings, saved, CONFIG_PATH)
-    except Exception:
-        engine.dispose()
-        raise
-    return engine
+    """The shared connection (up to three password attempts), offering to save the
+    settings afterwards.  The caller disposes the engine."""
+    return open_engine(args, offer_save=True)
 
 
 def step_cleanup(used: Path | None) -> None:
@@ -354,26 +343,19 @@ def run_cli(args) -> int:
     this module's own parser sets it through --json.
     """
     args.what = getattr(args, "what", None) or ("json" if getattr(args, "json", False) else None)
-    setup_logging(args.verbose, args.log_dir)
-    register_connection(args.user, args.host, args.database)
-    set_auto_yes(args.yes)
+    start(args)
     log.debug("get_data %s started with %s", __version__, vars(args))
 
     state: dict = {"used": None}
-    exit_code = 0
-    try:
+
+    def work():
         run(args, state)
         log.info("Done")
-    except KeyboardInterrupt:
-        log.error("Interrupted")
-        return 130  # skip the cleanup question; files stay for reuse
-    except Exception as exc:
-        log.error("%s", exc)
-        log.debug("Traceback:", exc_info=True)
-        if args.log_dir:
-            log.info("Details in %s", args.log_dir / DEBUG_LOG)
-        exit_code = 1
 
+    # unlike the other steps, the loader connects only when it reaches the upload
+    exit_code = guarded(work, log, args.log_dir)
+    if exit_code == 130:
+        return exit_code  # interrupted: skip the cleanup question; files stay for reuse
     try:
         step_cleanup(state["used"])
     except (PromptError, KeyboardInterrupt):

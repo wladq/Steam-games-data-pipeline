@@ -26,7 +26,7 @@ sys.path.insert(0, str(PROJECT_ROOT))  # so `get_data` imports when run as a scr
 
 # pylint: disable=wrong-import-position
 from get_data import PROJECT_NAME, __version__
-from get_data.sql_runner import add_common_args, execute, open_engine, read_statements, start
+from get_data.sql_runner import add_common_args, autocommit, execute, read_statements, run_step
 from qa_data import run_qa
 
 log = logging.getLogger("dashboard")
@@ -76,7 +76,7 @@ def qa_summary(constraints: list[dict], checks: list[dict]) -> dict:
 def collect(engine) -> dict:
     """Run every query and the QA checks; return the whole snapshot as one dict."""
     # autocommit: a failing check must not abort the queries that follow it
-    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+    with autocommit(engine) as conn:
         if not execute(conn, "SELECT to_regclass('core.games') IS NOT NULL").scalar_one():
             raise RuntimeError("core.games does not exist. Build the model first: "
                                "python main.py model")
@@ -277,24 +277,14 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
 
 def run(args: argparse.Namespace) -> int:
     """Collect the snapshot and write the files; return the exit code."""
-    start(args)
-    try:
-        engine = open_engine(args)
-        try:
-            data = collect(engine)
-        finally:
-            engine.dispose()
+
+    def work(engine):
+        data = collect(engine)
         for path in write_outputs(data, args.out):
             log.info("Wrote %s", path)
-    except KeyboardInterrupt:
-        log.error("Interrupted")
-        return 130
-    except Exception as exc:  # pylint: disable=broad-except
-        log.error("%s", exc)
-        log.debug("Traceback:", exc_info=True)
-        return 1
-    log.info("Done. Data quality: %s", "OK" if data["qa"]["ok"] else "PROBLEMS FOUND")
-    return 0
+        log.info("Done. Data quality: %s", "OK" if data["qa"]["ok"] else "PROBLEMS FOUND")
+
+    return run_step(args, work, log)
 
 
 def main() -> int:
