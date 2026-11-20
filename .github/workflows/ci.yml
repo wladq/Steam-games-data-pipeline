@@ -1,0 +1,94 @@
+# On every push: the unit tests, then the whole pipeline on tests/data/games_sample.json
+# in a throwaway Postgres 17 container (the server runs 17 too), then tests that read the
+# result back.  This tests the real SQL without the 1 GB download.
+#
+# The password is a throwaway for this container only.  -y answers every y/n question;
+# that is safe here because the checkout is fresh and tmp/ is never touched (the input
+# file lives in tests/data/).
+
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pipeline:
+    name: Tests and sample pipeline, Python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # the oldest version pyproject.toml allows, and a recent one
+        python: ["3.10", "3.14"]
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: steam_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci -d steam_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      PGPASSWORD: ci  # the loader takes the password from here instead of prompting
+      DB: -U ci -d steam_ci -H localhost -p 5432
+      PYTHONUNBUFFERED: "1"
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      - name: Install the dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Unit tests (offline; the database tests skip themselves here)
+        run: python -m unittest discover tests
+
+      - name: "Pipeline: load the sample JSON and build the staging tables"
+        run: python main.py get json -l tests/data/games_sample.json $DB -y
+
+      - name: "Pipeline: build the core model"
+        run: python main.py model $DB -y
+
+      - name: "Pipeline: constraints and checks (fails on any error-severity problem)"
+        run: python main.py qa $DB -y
+
+      - name: "Pipeline: profile the core tables"
+        run: python main.py analyse $DB -y
+
+      - name: "Pipeline: export the dashboard"
+        run: python main.py dashboard $DB -y --out "$RUNNER_TEMP/dashboard"
+
+      - name: Read the results back
+        env:
+          SAMPLE_DB_URL: postgresql+psycopg://ci:ci@localhost:5432/steam_ci
+        run: python -m unittest -v tests.test_sample_db
+
+      - name: Keep the logs of a failed run
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: logs-python-${{ matrix.python }}
+          path: logs/
+          if-no-files-found: ignore

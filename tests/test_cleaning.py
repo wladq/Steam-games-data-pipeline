@@ -11,7 +11,8 @@ Run:  python main.py debug                 (every test in tests/)
       python -m unittest discover tests    (every test, without main.py)
 
 The Python copy of the cleaning only approximates PostgreSQL's regular expressions;
-the real test is `python main.py model` followed by `python main.py qa`.
+the real test runs the SQL on tests/data/games_sample.json: tests/test_sample_db.py,
+which the GitHub Actions workflow runs on every push.
 """
 
 import re

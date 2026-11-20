@@ -191,7 +191,7 @@ in November 2026: the first run on a model built from the CSV, the current one o
 
 ### How quality is checked
 
-The same question, "is this data right?", is answered at four points.
+The same question, "is this data right?", is answered at five points.
 
 | Where | How | What it is good for |
 |---|---|---|
@@ -199,6 +199,7 @@ The same question, "is this data right?", is answered at four points.
 | Before loading, in Python | sanity checks in the loader | stops a broken file before it replaces a good table |
 | In the database, permanently | `qa_data/01_constraints.sql`: CHECK constraints, plus keys and foreign keys in the schema | rules that must hold for every row, forever; the database refuses bad writes |
 | In the database, on demand | `qa_data/02_checks.sql`: 29 queries that return the rows breaking a rule | counting problems instead of refusing them, rules across tables, rules that depend on today's date |
+| On every push, in a throwaway database | `.github/workflows/ci.yml`: the unit tests, then get json → model → qa → analyse → dashboard on `tests/data/games_sample.json` in a Postgres 17 container, and `tests/test_sample_db.py` reads the result back | the real SQL on every known problem case, without the 1 GB download, on Python 3.10 and 3.14 |
 
 Constraints are added as `NOT VALID` and then validated. A rule that existing rows break is
 reported as a finding, and it still protects every future write. The runner recognises a
@@ -285,7 +286,9 @@ qa_data/         SQL constraints and checks, and run_qa.py to run them
 analyse_data/    basic_check.py: profile a schema's tables (keys, fill, distinct values, stats, samples)
 dashboard/       queries.sql, export.py and the chart template; output goes to docs/
 docs/            the generated report.md, index.html and data/dashboard.json
-tests/           unit tests (main.py, loader, SQL files, QA rules), run with python main.py debug
+tests/           unit tests (main.py, loader, SQL files, QA rules), run with python main.py debug;
+                 data/games_sample.json: nine made-up games with the known problem cases
+.github/         workflows/ci.yml: unit tests and the sample pipeline on every push
 main.py          one entry point: get, model, qa, analyse, dashboard, debug
 pyproject.toml   name, version (read from get_data/__init__.py), dependencies, licence
 LICENSE          GNU General Public License v3
