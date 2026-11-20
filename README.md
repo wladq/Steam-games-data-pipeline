@@ -34,7 +34,9 @@ was wrong with the data on the way in, and how each problem is now caught automa
   ```
 
 - **Nothing sensitive is stored in the repository.** The password is typed at a prompt or
-  read from `PGPASSWORD`. User, host and database name live in a git-ignored
+  read from `PGPASSWORD`. A rejected login is retried up to three times with a fresh prompt
+  (once with `PGPASSWORD`), and no password is asked at all when nothing answers at the
+  host and port, for example when the tunnel is down. User, host and database name live in a git-ignored
   `db_config.json`. Downloads go to a git-ignored `tmp/` folder.
 
 ## How to run it
@@ -58,8 +60,10 @@ python main.py debug                   # unit tests in tests/, no database neede
 The model is built from the JSON, so `get json` has to run before `model`. The CSV load is
 optional: it feeds the checks that compare the two files.
 
-`main.py` is the one entry point. Run it without arguments and it asks for the part, then
-for the rest. With arguments, the part comes first, then its parameters. For `get` the order
+`main.py` is the one entry point. Run it without arguments for a numbered menu of the parts
+(type the number or the name), then answer that part's questions. `-m` (`--manual`) opens one
+part's questions straight away, for example `python main.py analyse -m`; flags given next
+to it are kept. With arguments, the part comes first, then its parameters. For `get` the order
 is what (`csv` or `json`), where from (`-k OWNER/NAME` or `-l FILE`), where to (`-U -d -H -p`),
 place (`--table`), and behaviour (`-y`, `-v`, `--log-dir`, `--dry-run`):
 

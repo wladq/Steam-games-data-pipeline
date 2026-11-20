@@ -2,6 +2,7 @@
 
 - telling a Kaggle dataset from a local file, and choosing the file format
 - the y/n-free prompts: ask_choice, and host/port defaults in resolve_settings
+- connecting: up to three password attempts, none when the host does not answer
 - read_csv keeps names such as 'None' and 'NA' as text (only empty cells are missing)
 
 Run:  python main.py debug                 (every test in tests/)
@@ -13,6 +14,7 @@ import contextlib
 import io
 import json
 import math
+import os
 import re
 import sys
 import tempfile
@@ -23,8 +25,10 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 # pylint: disable=wrong-import-position,protected-access
-from get_data import cli, json_load  # noqa: E402
-from get_data.config import resolve_settings  # noqa: E402
+from sqlalchemy.exc import OperationalError  # noqa: E402
+
+from get_data import cli, db, json_load  # noqa: E402
+from get_data.config import DbSettings, resolve_settings  # noqa: E402
 from get_data.prompts import ask_choice, ask_int, ask_selection  # noqa: E402
 from get_data.transform import read_csv  # noqa: E402
 
@@ -277,6 +281,79 @@ class LegacyCopiesTest(unittest.TestCase):
 
     def test_no_question_without_old_copies(self):
         self.run_step([], "y").assert_not_called()  # a second question would raise StopIteration
+
+
+def login_error() -> OperationalError:
+    """A failed login as psycopg reports it: text only, the reason on the last line."""
+    message = ('connection failed: connection to server at "127.0.0.1", port 5433 failed: '
+               'could not initiate GSSAPI security context\n'
+               'connection to server at "127.0.0.1", port 5433 failed: '
+               'FATAL:  password authentication failed for user "me"')
+    return OperationalError("connect", {}, Exception(message))
+
+
+class ConnectEngineTest(unittest.TestCase):
+    """connect_engine: up to three password attempts, but only when they can help."""
+
+    SETTINGS = DbSettings(username="me", database="steam")
+
+    def setUp(self):
+        self.engines = []
+
+        def make_engine(_settings, password):
+            engine = mock.Mock(name=f"engine-{password}")
+            self.engines.append(engine)
+            return engine
+
+        patches = {
+            "reach": mock.patch.object(db.socket, "create_connection"),
+            "password": mock.patch.object(db, "get_password", side_effect=["a", "b", "c"]),
+            "engine": mock.patch.object(db, "make_engine", side_effect=make_engine),
+            "test": mock.patch.object(db, "test_connection"),
+            "env": mock.patch.dict(os.environ),
+        }
+        self.mocks = {name: p.start() for name, p in patches.items()}
+        for p in patches.values():
+            self.addCleanup(p.stop)
+        os.environ.pop("PGPASSWORD", None)
+
+    def test_the_third_password_can_still_work(self):
+        self.mocks["test"].side_effect = [login_error(), login_error(), "PostgreSQL 17.11"]
+        with self.assertLogs("get_data.db", "WARNING") as logs:
+            engine, version = db.connect_engine(self.SETTINGS)
+        self.assertEqual(version, "PostgreSQL 17.11")
+        self.assertIs(engine, self.engines[2])
+        self.assertEqual(self.mocks["password"].call_count, 3)
+        self.assertIn("attempt 1 of 3", logs.output[0])
+        self.assertIn("password authentication failed", logs.output[0])
+        for failed in self.engines[:2]:
+            failed.dispose.assert_called_once()
+
+    def test_three_failed_logins_give_up_with_the_server_reason(self):
+        self.mocks["test"].side_effect = [login_error()] * 3
+        with self.assertLogs("get_data.db", "WARNING"), \
+                self.assertRaisesRegex(RuntimeError, "after 3 attempts: .*password authentication"):
+            db.connect_engine(self.SETTINGS)
+        self.assertEqual(self.mocks["password"].call_count, 3)
+
+    def test_pgpassword_means_a_single_attempt(self):
+        os.environ["PGPASSWORD"] = "from-env"
+        self.mocks["test"].side_effect = [login_error()]
+        with self.assertRaisesRegex(RuntimeError, "after 1 attempt: "):
+            db.connect_engine(self.SETTINGS)
+        self.assertEqual(self.mocks["password"].call_count, 1)
+
+    def test_no_password_is_asked_when_nothing_answers(self):
+        self.mocks["reach"].side_effect = ConnectionRefusedError("refused")
+        with self.assertRaisesRegex(RuntimeError, "Nothing answers at localhost:5433"):
+            db.connect_engine(self.SETTINGS)
+        self.mocks["password"].assert_not_called()
+
+    def test_errors_other_than_a_failed_connection_are_not_retried(self):
+        self.mocks["test"].side_effect = ValueError("bug")
+        with self.assertRaises(ValueError):
+            db.connect_engine(self.SETTINGS)
+        self.assertEqual(self.mocks["password"].call_count, 1)
 
 
 class ReadCsvTest(TempDirTest):

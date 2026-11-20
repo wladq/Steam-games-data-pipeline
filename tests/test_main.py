@@ -10,6 +10,7 @@ Run:  python main.py debug                 (every test in tests/)
 
 import contextlib
 import io
+import re
 import sys
 import tempfile
 import unittest
@@ -162,26 +163,70 @@ class ParameterModeTest(PartMocks):
         self.assertEqual(code, 1)
 
 
+class ManualFlagTest(PartMocks):
+    """PART -m opens that part's questions without the menu."""
+
+    def test_every_part_accepts_m_and_manual(self):
+        for part in main.PARTS:
+            for flag in ("-m", "--manual"):
+                with self.subTest(part=part, flag=flag):
+                    self.assertTrue(parse([part, flag]).manual)
+            self.assertFalse(parse([part]).manual)
+
+    def test_analyse_m_is_handed_over_as_interactive(self):
+        _, prompts, _ = run_main(["analyse", "-m"])
+        self.assertEqual(prompts, [])  # no menu: analyse asks its own questions
+        self.assertTrue(self.called_args("analyse").interactive)
+
+    def test_get_m_skips_the_menu_and_asks_the_get_questions(self):
+        _, prompts, _ = run_main(["get", "--manual"], ["json", "tmp/games.json", ""])
+        self.assertEqual([p.split(" ")[0] for p in prompts], ["What", "Kaggle", "Target"])
+        args = self.called_args("run_cli")
+        self.assertEqual((args.what, args.local_file, args.table, args.interactive),
+                         ("json", Path("tmp/games.json"), "games_json", True))
+
+    def test_flags_given_with_m_are_kept(self):
+        run_main(["analyse", "-m", "--schema", "public", "-n", "5"])
+        args = self.called_args("analyse")
+        self.assertEqual((args.schema, args.rows, args.interactive), ("public", 5, True))
+
+    def test_without_m_nothing_is_asked(self):
+        _, prompts, _ = run_main(["qa"])
+        self.assertEqual(prompts, [])
+        self.assertFalse(self.called_args("qa").interactive)
+
+
 class InteractiveModeTest(PartMocks):
     """Without arguments, main.py asks for the part first, then for that part's details."""
 
-    def test_part_is_asked_first_and_parts_are_listed(self):
+    def test_part_is_asked_first_and_parts_are_listed_with_numbers(self):
         code, prompts, out = run_main([], ["model"])
         self.assertEqual(code, 0)
-        self.assertTrue(prompts[0].startswith("Part (get/model/qa/analyse/dashboard/debug)"))
-        for part in main.PARTS:
-            self.assertIn(part, out)
+        self.assertTrue(prompts[0].startswith("Part (number 1-6 or name)"))
+        for number, part in enumerate(main.PARTS, 1):
+            self.assertRegex(out, rf"\n  {number}  {part} +{re.escape(main.PARTS[part])}")
         self.assertTrue(self.called_args("model").interactive)
+
+    def test_a_number_selects_the_part(self):
+        run_main([], ["2"])
+        self.mocks["model"].assert_called_once()
 
     def test_a_unique_beginning_selects_the_part(self):
         run_main([], ["m"])
         self.mocks["model"].assert_called_once()
 
-    def test_an_unknown_part_is_asked_again(self):
-        _, prompts, out = run_main([], ["x", "qa", "y"])
-        self.assertIn("Please answer one of", out)
-        self.assertEqual(sum(p.startswith("Part") for p in prompts), 2)
+    def test_an_unknown_part_or_number_is_asked_again(self):
+        _, prompts, out = run_main([], ["x", "9", "qa", "y"])
+        self.assertEqual(out.count("Please answer a number from 1 to 6"), 2)
+        self.assertEqual(sum(p.startswith("Part") for p in prompts), 3)
         self.assertFalse(self.called_args("qa").checks_only)
+
+    def test_an_ambiguous_beginning_is_asked_again(self):
+        # 'd' could be dashboard or debug; the retry picks dashboard, which is mocked
+        _, prompts, out = run_main([], ["d", "dashboard"])
+        self.assertIn("Please answer a number", out)
+        self.assertEqual(sum(p.startswith("Part") for p in prompts), 2)
+        self.mocks["dashboard"].assert_called_once()
 
     def test_get_asks_what_where_from_where_to_place_in_order(self):
         events = []

@@ -1,6 +1,7 @@
 """Steam-games-data-pipeline: one entry point for every step.
 
-Interactive:  python main.py            asks which part to run, then everything else
+Interactive:  python main.py            numbered menu of parts, then that part's questions
+One part:     python main.py PART -m    that part's questions straight away (--manual)
 Parameters:   python main.py PART ...   anything not given is asked or defaulted
 Help:         python main.py -h         and  python main.py PART -h
 
@@ -43,7 +44,8 @@ PARTS = {
 
 EXAMPLES = f"""\
 examples:
-  python main.py                        ask for the part, then for everything else
+  python main.py                        numbered menu: choose a part, then answer its questions
+  python main.py analyse -m             the analyse questions straight away (works for every part)
   python main.py get csv -k {get_cli.DEFAULT_DATASET} -U me -d steam
   python main.py get json -l tmp/games.json --table games_json -y
   python main.py model -y
@@ -55,8 +57,10 @@ examples:
 The password is never a flag. Set PGPASSWORD to skip the prompt.
 """
 
+MANUAL_HELP = "ask this part's questions step by step, as when it is chosen from the menu"
+
 GET_USAGE = """\
-python main.py get [-h] [{csv,json}]
+python main.py get [-h] [-m] [{csv,json}]
                           [-k OWNER/NAME | -l FILE] [-f NAME]
                           [-U USER] [-d DATABASE] [-H HOST] [-p PORT]
                           [--table TABLE] [--normalise-only]
@@ -85,16 +89,23 @@ def build_parser() -> argparse.ArgumentParser:
     add_part(parts, "dashboard", dashboard_export.add_arguments, dashboard_export.run)
     sub = parts.add_parser("debug", help=PARTS["debug"],
                            description=PARTS["debug"].capitalize() + ".")
+    add_manual(sub)
     sub.add_argument("test", nargs="?", choices=list_tests(),
                      help="run only this test (default: all)")
     sub.set_defaults(handler=run_debug)
     return parser
 
 
+def add_manual(sub: argparse.ArgumentParser) -> None:
+    """-m/--manual: run this part interactively without going through the menu."""
+    sub.add_argument("-m", "--manual", action="store_true", help=MANUAL_HELP)
+
+
 def add_part(parts, name: str, add_arguments, handler) -> None:
     """Add one sub-command whose flags come from the part's own module."""
     sub = parts.add_parser(name, help=PARTS[name],
                            description=PARTS[name].capitalize() + ".")
+    add_manual(sub)
     add_arguments(sub)
     sub.set_defaults(handler=handler)
 
@@ -106,6 +117,7 @@ def add_get_parser(parts) -> None:
         description="Load the Kaggle Steam games dataset into PostgreSQL.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    add_manual(sub)
     what = sub.add_argument_group("what")
     what.add_argument("what", nargs="?", choices=FORMATS,
                       help="data format (default: csv, or json when the file is "
@@ -140,12 +152,20 @@ def add_get_parser(parts) -> None:
 # --- interactive questions ---------------------------------------------------------
 
 def ask_part() -> str:
-    """Show the parts and ask which one to run."""
+    """Show the numbered parts; accept a number, a name or a unique beginning such as 'm'."""
+    names = list(PARTS)
+    width = max(map(len, names))
     print("What part of processing?")
-    width = max(map(len, PARTS))
-    for name, about in PARTS.items():
-        print(f"  {name:<{width}}  {about}")
-    return ask_choice("Part", list(PARTS))
+    for number, (name, about) in enumerate(PARTS.items(), 1):
+        print(f"  {number}  {name:<{width}}  {about}")
+    while True:
+        answer = ask_text(f"Part (number 1-{len(names)} or name)").strip().lower()
+        if answer.isdigit() and 1 <= int(answer) <= len(names):
+            return names[int(answer) - 1]
+        matches = [name for name in names if name.startswith(answer)]
+        if answer in names or len(matches) == 1:
+            return answer if answer in names else matches[0]
+        print(f"Please answer a number from 1 to {len(names)} or one of: {', '.join(names)}.")
 
 
 def ask_get_details(args: argparse.Namespace) -> None:
@@ -228,7 +248,7 @@ def main(argv: list[str] | None = None) -> int:
     interactive = not argv
     try:
         args = build_parser().parse_args([ask_part()] if interactive else argv)
-        args.interactive = interactive
+        args.interactive = interactive or args.manual
         return args.handler(args)
     except PromptError as exc:
         print(f"ERROR: {exc}")

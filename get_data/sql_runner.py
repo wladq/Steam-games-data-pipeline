@@ -15,7 +15,7 @@ from pathlib import Path
 
 from sqlalchemy import Connection, Engine
 
-from .config import get_password, resolve_settings
+from .config import resolve_settings
 from .logging_setup import register_connection, setup_logging
 from .prompts import set_auto_yes
 
@@ -68,17 +68,13 @@ def start(args: argparse.Namespace) -> None:
 
 
 def open_engine(args: argparse.Namespace) -> Engine:
-    """Resolve the settings, ask for the password and test the connection."""
-    from .db import make_engine, test_connection  # pylint: disable=import-outside-toplevel
+    """Resolve the settings, then connect with up to three password attempts."""
+    from .db import connect_engine  # pylint: disable=import-outside-toplevel
 
     settings, _ = resolve_settings(args, CONFIG_PATH)
-    engine = make_engine(settings, get_password(settings))
-    try:
-        log.info("Connecting to %s ...", settings.describe())
-        log.info("Connected: %s", test_connection(engine))
-    except Exception:
-        engine.dispose()
-        raise
+    log.info("Connecting to %s ...", settings.describe())
+    engine, version = connect_engine(settings)
+    log.info("Connected: %s", version)
     return engine
 
 

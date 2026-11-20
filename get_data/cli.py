@@ -16,7 +16,7 @@ import logging
 from pathlib import Path
 
 from . import __version__, json_load
-from .config import get_password, offer_to_save, resolve_settings
+from .config import offer_to_save, resolve_settings
 from .kaggle_download import clear_tmp, download_dataset_file, list_dataset_files, parse_dataset_ref
 from .logging_setup import DEBUG_LOG, register_connection, setup_logging
 from .prompts import PromptError, ask_text, ask_yes_no, set_auto_yes
@@ -174,14 +174,14 @@ def data_format(path: Path) -> str:
 # --- shared steps --------------------------------------------------------------
 
 def connect(args):
-    """Resolve settings, ask for the password, test the connection.  Caller disposes the engine."""
-    from .db import make_engine, test_connection
+    """Resolve settings, connect with up to three password attempts.  Caller disposes the engine."""
+    from .db import connect_engine
 
     settings, saved = resolve_settings(args, CONFIG_PATH)
-    engine = make_engine(settings, get_password(settings))
+    log.info("Connecting to %s ...", settings.describe())
+    engine, version = connect_engine(settings)
     try:
-        log.info("Connecting to %s ...", settings.describe())
-        log.info("Connected: %s", test_connection(engine))
+        log.info("Connected: %s", version)
         offer_to_save(settings, saved, CONFIG_PATH)
     except Exception:
         engine.dispose()
