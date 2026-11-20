@@ -263,8 +263,10 @@ the GNU General Public License version 3 as published by the Free Software Found
 distributed in the hope that it will be useful, but without any warranty; see
 [LICENSE](LICENSE) for the full text.
 
-The licence covers the code in this repository. The Steam Games Dataset itself belongs to
-its authors on Kaggle and keeps its own terms; `docs/` only publishes numbers derived from it.
+The licence covers the code in this repository. The data comes from the
+[Steam Games Dataset](https://www.kaggle.com/datasets/fronkongames/steam-games-dataset) by
+FronkonGames on Kaggle, published under the MIT License, which is compatible with the GPL.
+The dataset is not stored in this repository; `docs/` only publishes numbers derived from it.
 
 ## Project layout
 
