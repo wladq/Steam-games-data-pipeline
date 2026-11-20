@@ -124,7 +124,7 @@ class ParserTest(unittest.TestCase):
 
     def test_each_part_has_its_handler(self):
         expected = {"get": main.run_get, "model": main.build.run,
-                    "qa": main.run_qa_part, "analyse": main.run_analyse,
+                    "qa": main.run_qa_part, "analyse": main.basic_check.run,
                     "dashboard": main.dashboard_export.run, "debug": main.run_debug}
         for part, handler in expected.items():
             with self.subTest(part=part):
@@ -148,9 +148,11 @@ class ParameterModeTest(PartMocks):
         self.assertTrue(self.called_args("model").yes)
         run_main(["qa", "--checks-only"])
         self.assertTrue(self.called_args("qa").checks_only)
-        run_main(["analyse", "--table", "games_json", "-n", "2"])
+        run_main(["analyse", "--schema", "public", "--table", "games_json,games", "-n", "2",
+                  "--sample-from", "games"])
         args = self.called_args("analyse")
-        self.assertEqual((args.table, args.rows), ("games_json", 2))
+        self.assertEqual((args.schema, args.table, args.rows, args.sample_from),
+                         ("public", "games_json,games", 2, "games"))
         run_main(["dashboard", "--out", "site"])
         self.assertEqual(self.called_args("dashboard").out, Path("site"))
 
@@ -207,11 +209,13 @@ class InteractiveModeTest(PartMocks):
         run_main([], ["qa", "n"])
         self.assertTrue(self.called_args("qa").checks_only)
 
-    def test_analyse_asks_table_and_a_whole_number_of_rows(self):
-        _, _, out = run_main([], ["analyse", "games_json", "x", "3"])
-        self.assertIn("whole number", out)
+    def test_analyse_is_handed_over_to_ask_its_own_questions(self):
+        _, prompts, _ = run_main([], ["analyse"])
+        self.assertEqual(len(prompts), 1)  # only the part; analyse asks after connecting
         args = self.called_args("analyse")
-        self.assertEqual((args.table, args.rows), ("games_json", 3))
+        self.assertTrue(args.interactive)
+        self.assertEqual((args.schema, args.table, args.rows, args.sample_from),
+                         ("core", None, 3, None))
 
     def test_no_input_available_is_an_error(self):
         code, _, out = run_main([], [])

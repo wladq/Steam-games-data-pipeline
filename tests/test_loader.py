@@ -13,6 +13,7 @@ import contextlib
 import io
 import json
 import math
+import re
 import sys
 import tempfile
 import unittest
@@ -22,9 +23,9 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 # pylint: disable=wrong-import-position,protected-access
-from get_data import cli  # noqa: E402
+from get_data import cli, json_load  # noqa: E402
 from get_data.config import resolve_settings  # noqa: E402
-from get_data.prompts import ask_choice  # noqa: E402
+from get_data.prompts import ask_choice, ask_int, ask_selection  # noqa: E402
 from get_data.transform import read_csv  # noqa: E402
 
 BOTH = [("games.csv", 401_000_000), ("games.json", 1_008_000_000)]
@@ -153,6 +154,46 @@ class AskChoiceTest(unittest.TestCase):
             self.assertEqual(ask_choice("What", ["csv", "json"], default="csv"), "csv")
 
 
+class AskSelectionTest(unittest.TestCase):
+    """ask_selection lists the options numbered and accepts names, numbers and shortcuts."""
+
+    OPTIONS = ["games", "game_tags", "tags"]
+
+    def ask(self, *answers, **kwargs):
+        """Run ask_selection with typed answers; return (result, printed text)."""
+        out = io.StringIO()
+        with mock.patch("builtins.input", side_effect=list(answers)), \
+                contextlib.redirect_stdout(out):
+            result = ask_selection("Tables", self.OPTIONS, **kwargs)
+        return result, out.getvalue()
+
+    def test_options_are_listed_with_numbers_and_notes(self):
+        _, printed = self.ask("1", notes={"games": "about 148.9k rows"})
+        self.assertIn("1  games   about 148.9k rows", printed)
+        self.assertIn("3  tags", printed)
+
+    def test_names_and_numbers_mixed_in_a_comma_list(self):
+        result, _ = self.ask("3, GAMES ,3", many=True)
+        self.assertEqual(result, ["tags", "games"])
+
+    def test_shortcut_and_default(self):
+        result, _ = self.ask("", default="all", many=True,
+                             shortcuts={"all": self.OPTIONS, "none": []})
+        self.assertEqual(result, self.OPTIONS)
+        result, _ = self.ask("none", many=True, shortcuts={"none": []})
+        self.assertEqual(result, [])
+
+    def test_unknown_items_and_too_many_are_asked_again(self):
+        result, printed = self.ask("players", "1,2", "2")
+        self.assertEqual(result, ["game_tags"])
+        self.assertIn("Not in the list: players", printed)
+        self.assertIn("only one", printed)
+
+    def test_ask_int_repeats_until_a_whole_number(self):
+        with typing("x", ""):
+            self.assertEqual(ask_int("Rows", default=3), 3)
+
+
 class ResolveSettingsTest(TempDirTest):
     """Connection settings: flag > saved file > prompt; host and port offer defaults."""
 
@@ -184,6 +225,58 @@ class ResolveSettingsTest(TempDirTest):
     def test_a_port_that_is_not_a_number_is_an_error(self):
         with typing("me", "steam", "", "abc"), self.assertRaises(ValueError):
             resolve_settings(self.flags(), self.tmp / "none.json")
+
+
+class StagingSchemaTest(unittest.TestCase):
+    """The JSON loader's wide tables live in schema staging, never in public."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.stmts = json_load.normalise_statements('"games_json"')
+        cls.sql = "\n".join(cls.stmts)
+
+    def test_schema_is_created_first(self):
+        self.assertEqual(self.stmts[0], "CREATE SCHEMA IF NOT EXISTS staging")
+
+    def test_every_table_statement_targets_staging(self):
+        for stmt in self.stmts[1:]:
+            with self.subTest(stmt=stmt[:60]):
+                target = re.match(r"(?:CREATE TABLE|DROP TABLE IF EXISTS|ALTER TABLE|"
+                                  r"CREATE INDEX ON) (\S+)", stmt).group(1)
+                self.assertTrue(target.startswith("staging."))
+
+    def test_foreign_keys_point_into_staging(self):
+        refs = re.findall(r"REFERENCES (\S+?)\(", self.sql)
+        self.assertTrue(refs)
+        self.assertTrue(all(ref.startswith("staging.") for ref in refs), refs)
+
+    def test_every_table_is_built_and_nothing_goes_to_public(self):
+        built = set(re.findall(r"CREATE TABLE staging\.(\w+)", self.sql))
+        self.assertEqual(built, set(json_load.NORMALISED_TABLES))
+        self.assertNotIn("public.", self.sql)
+
+
+class LegacyCopiesTest(unittest.TestCase):
+    """After building staging, the old copies in public are offered for removal."""
+
+    def run_step(self, legacy, *answers):
+        """Run step_normalise with the database calls mocked; return the drop mock."""
+        with mock.patch.object(cli.json_load, "normalise") as normalise, \
+                mock.patch.object(cli.json_load, "legacy_tables", return_value=legacy), \
+                mock.patch.object(cli.json_load, "drop_legacy") as drop, typing(*answers):
+            cli.step_normalise(engine=None, landing_table="games_json")
+        normalise.assert_called_once()
+        return drop
+
+    def test_yes_drops_the_old_copies(self):
+        drop = self.run_step(["games", "game_tags"], "y", "y")
+        drop.assert_called_once_with(None, ["games", "game_tags"])
+
+    def test_enter_keeps_them(self):
+        self.run_step(["games"], "y", "").assert_not_called()
+
+    def test_no_question_without_old_copies(self):
+        self.run_step([], "y").assert_not_called()  # a second question would raise StopIteration
 
 
 class ReadCsvTest(TempDirTest):

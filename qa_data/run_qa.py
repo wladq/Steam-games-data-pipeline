@@ -27,10 +27,19 @@ CHECKS_FILE = HERE / "02_checks.sql"
 _CONSTRAINT_NAME = re.compile(r"CONSTRAINT\s+(?:IF\s+EXISTS\s+)?(\w+)", re.IGNORECASE)
 _TABLE_NAME = re.compile(r"^[\w.]+$")
 
+# SQLSTATE of "check constraint ... is violated by some row".  The message text follows
+# the server's language setting (lc_messages); the five-character code never changes.
+CHECK_VIOLATION = "23514"
+
 
 def first_line(exc: Exception) -> str:
     """The database's own message, without SQLAlchemy's wrapper and the SQL text."""
     return str(getattr(exc, "orig", exc)).strip().splitlines()[0]
+
+
+def sqlstate(exc: Exception) -> str | None:
+    """The SQLSTATE error code of a database error, e.g. '23514'; None for other errors."""
+    return getattr(getattr(exc, "orig", exc), "sqlstate", None)
 
 
 # --- constraints -------------------------------------------------------------------
@@ -46,7 +55,7 @@ def run_constraints(conn) -> dict[str, tuple[str, str]]:
         try:
             execute(conn, stmt.sql)
         except Exception as exc:  # pylint: disable=broad-except
-            status = "VIOLATED" if validating and "violated" in str(exc) else "ERROR"
+            status = "VIOLATED" if validating and sqlstate(exc) == CHECK_VIOLATION else "ERROR"
             results.setdefault(name, (status, first_line(exc)))  # keep the first problem
             log.debug("%s failed: %s", name, first_line(exc))
         else:

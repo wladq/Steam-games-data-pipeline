@@ -36,7 +36,7 @@ PARTS = {
     "get": "download or read games.csv / games.json and load it into PostgreSQL",
     "model": "build the normalised core schema from the JSON landing table",
     "qa": "add the data-quality constraints and run the checks",
-    "analyse": "show sample rows and basic statistics of one table",
+    "analyse": "profile the tables of a schema: keys, columns, statistics, sample rows",
     "dashboard": "export a snapshot to docs/: report.md for GitHub, index.html with charts",
     "debug": "run the unit tests in tests/ (no database needed)",
 }
@@ -48,7 +48,7 @@ examples:
   python main.py get json -l tmp/games.json --table games_json -y
   python main.py model -y
   python main.py qa --checks-only
-  python main.py analyse --table games_json -n 3
+  python main.py analyse --table games,tags --sample-from games
   python main.py dashboard
   python main.py debug
 
@@ -80,7 +80,8 @@ def build_parser() -> argparse.ArgumentParser:
     add_get_parser(parts)
     add_part(parts, "model", build.add_arguments, build.run)
     add_part(parts, "qa", run_qa.add_arguments, run_qa_part)
-    add_part(parts, "analyse", basic_check.add_arguments, run_analyse)
+    # analyse asks its own questions after connecting, so it can list schemas and tables
+    add_part(parts, "analyse", basic_check.add_arguments, basic_check.run)
     add_part(parts, "dashboard", dashboard_export.add_arguments, dashboard_export.run)
     sub = parts.add_parser("debug", help=PARTS["debug"],
                            description=PARTS["debug"].capitalize() + ".")
@@ -126,8 +127,8 @@ def add_get_parser(parts) -> None:
                        help=f"target table (default: {get_cli.DEFAULT_TABLE['csv']} "
                             f"for CSV, {get_cli.DEFAULT_TABLE['json']} for JSON)")
     place.add_argument("--normalise-only", action="store_true",
-                       help="skip loading; rebuild the normalised tables from the "
-                            "existing JSON landing table")
+                       help="skip loading; rebuild the tables in schema staging from "
+                            "the existing JSON landing table")
 
     behaviour = add_behaviour_args(sub)
     behaviour.add_argument("--dry-run", action="store_true",
@@ -145,15 +146,6 @@ def ask_part() -> str:
     for name, about in PARTS.items():
         print(f"  {name:<{width}}  {about}")
     return ask_choice("Part", list(PARTS))
-
-
-def ask_int(question: str, default: int) -> int:
-    """Ask for a whole number; Enter keeps the default."""
-    while True:
-        answer = ask_text(question, default=str(default))
-        if answer.isdigit():
-            return int(answer)
-        print("Please type a whole number.")
 
 
 def ask_get_details(args: argparse.Namespace) -> None:
@@ -187,14 +179,6 @@ def run_qa_part(args: argparse.Namespace) -> int:
         args.checks_only = not ask_yes_no(
             "Add and validate the CHECK constraints too? (no = read-only checks)")
     return run_qa.run(args)
-
-
-def run_analyse(args: argparse.Namespace) -> int:
-    """Show one table; interactive runs ask which table and how many rows."""
-    if args.interactive:
-        args.table = ask_text("Table to inspect", default=args.table)
-        args.rows = ask_int("Random sample rows", default=args.rows)
-    return basic_check.run(args)
 
 
 def list_tests() -> list[str]:

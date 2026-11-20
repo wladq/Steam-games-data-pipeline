@@ -18,7 +18,7 @@ was wrong with the data on the way in, and how each problem is now caught automa
 │  main.py       runs every part │                │                                   │
 │  get_data/     download, load ─┼─ localhost ───►│  public.games_raw    CSV landing  │
 │  model_data/   build the model │    :5433       │  public.games_json   JSON landing │
-│  qa_data/      check the model │   encrypted    │  public.game_*       from JSON    │
+│  qa_data/      check the model │   encrypted    │  staging.game_*      from JSON    │
 │  analyse_data/ look at a table │                │  core.*              the model    │
 └────────────────────────────────┘                └───────────────────────────────────┘
 ```
@@ -39,16 +39,18 @@ was wrong with the data on the way in, and how each problem is now caught automa
 
 ## How to run it
 
+Needs Python 3.10 or newer (developed on 3.15) and PostgreSQL 17.
+
 ```
 pip install -r requirements.txt
 kaggle auth login                      # once
 
 python main.py                         # asks which part to run, then everything else
 python main.py get                     # games.csv  -> public.games_raw
-python main.py get json                # games.json -> public.games_json + public.game_* tables
+python main.py get json                # games.json -> public.games_json + staging.* tables
 python main.py model                   # public.games_json -> core.* (normalised model)
 python main.py qa                      # constraints + checks, prints a report
-python main.py analyse                 # quick look at a table: samples and basic stats
+python main.py analyse                 # profile every table of core: keys, columns, stats, samples
 python main.py dashboard               # snapshot to docs/: report.md and index.html
 python main.py debug                   # unit tests in tests/, no database needed
 ```
@@ -70,6 +72,18 @@ Anything left out comes from the saved `db_config.json` or is asked. `python mai
 `-y` answers yes to every question, and `--dry-run` checks a file without touching the
 database. The per-folder scripts (`python -m get_data`, `python model_data/build.py`,
 `python qa_data/run_qa.py`, `python analyse_data/basic_check.py`) still work on their own.
+
+`analyse` is the companion of `qa`: where `qa` checks rules, `analyse` describes what is
+there. For every table of a schema (`core` by default, `--schema public` for the landing
+tables, or one table with `--table core.games`) it logs the row count, size, keys, and per
+column the share of filled rows, the number of distinct values and a summary that fits the
+type (min, median, mean and max; yes and no shares; first and last date; text lengths),
+followed by 3 random rows (`-n` changes the number). `--table` and `--sample-from` take
+comma-separated lists, so `--table games,tags --sample-from games` profiles two tables and
+shows rows from one. Run interactively (`python main.py`, then `analyse`), it first lists
+the schemas and then the tables with their approximate size, and accepts names or numbers.
+It only reads, computes everything in the database, and writes the same anonymised logs
+as `qa`.
 
 ## Data model
 
@@ -93,8 +107,12 @@ functions that turn every shape into one SQL type. Spellings of a developer that
 in capitalisation (`1UP games`, `1UP Games`) become one developer under the most common
 spelling. Language entries carry markup leftovers and get their own cleaning function.
 
-The JSON load also builds a wider set of plain tables in `public` (`games`, `game_tags`,
-`game_packages` with prices per edition, and more). They are independent of `core`.
+The JSON load also builds a wider set of plain tables in the `staging` schema
+(`staging.games`, `staging.game_tags`, `staging.game_packages` with prices per edition, and
+more). They are a quick, uncleaned view of the JSON, independent of `core`, and their own
+schema keeps `staging.games` and `core.games` from being confused. Version 0.6.0 and
+earlier built them in `public`; the loader offers to drop those old copies after the next
+build.
 
 ## Dashboard
 
@@ -133,7 +151,7 @@ in November 2026: the first run on a model built from the CSV, the current one o
    `score_rank` is a string except for 40 numbers. The loader prints this inventory for
    every key, and the SQL that builds the tables handles each shape explicitly.
 5. **Some fields are present but empty.** Every game has a `movies` array, yet none holds
-   an entry in this snapshot, so `public.game_movies` has 0 rows.
+   an entry in this snapshot, so `staging.game_movies` has 0 rows.
 6. **Missing values are disguised.** A Metacritic score of 0 means "no score", so the model
    stores NULL. Owner counts are text ranges such as `20000 - 50000`, stored as two numbers.
    Release dates are text in two formats, `Oct 21, 2008` and `Oct 2008`. Unparseable dates
@@ -160,7 +178,7 @@ in November 2026: the first run on a model built from the CSV, the current one o
     warnings, and the unit tests use the names as known errors that the checks must keep
     flagging.
 11. **The JSON model reconciles with an independent build.** `core.game_tags` has 1,180,708
-    rows, exactly as many as `public.game_tags`, which the JSON loader builds with
+    rows, exactly as many as `staging.game_tags`, which the JSON loader builds with
     different SQL. Every game with tags or developers in the JSON has them linked, and every
     tag kept its vote count.
 
@@ -176,7 +194,9 @@ The same question, "is this data right?", is answered at four points.
 | In the database, on demand | `qa_data/02_checks.sql`: 29 queries that return the rows breaking a rule | counting problems instead of refusing them, rules across tables, rules that depend on today's date |
 
 Constraints are added as `NOT VALID` and then validated. A rule that existing rows break is
-reported as a finding, and it still protects every future write. A rule that the source data
+reported as a finding, and it still protects every future write. The runner recognises a
+violation by its error code (SQLSTATE 23514), not by the message text, so it works whatever
+language the server writes its messages in. A rule that the source data
 itself breaks is a warning check instead of a constraint: the one game without a name and the
 9 games without a platform would otherwise fail every run, and a run that always fails says
 nothing. Each check has a severity:
@@ -230,15 +250,29 @@ user, host and name, e-mail addresses and IP addresses are replaced with placeho
 `<db-user>`. Extra words can be hidden with the `GET_DATA_REDACT` environment variable,
 comma separated. The console is not anonymised.
 
+## Licence
+
+Copyright (C) 2026 Wladyslaw.
+
+This program is free software: you can redistribute it and/or modify it under the terms of
+the GNU General Public License version 3 as published by the Free Software Foundation. It is
+distributed in the hope that it will be useful, but without any warranty; see
+[LICENSE](LICENSE) for the full text.
+
+The licence covers the code in this repository. The Steam Games Dataset itself belongs to
+its authors on Kaggle and keeps its own terms; `docs/` only publishes numbers derived from it.
+
 ## Project layout
 
 ```
 get_data/        loader package: prompts, config, Kaggle download, CSV and JSON loading, logging
 model_data/      SQL that builds the core schema, and build.py to run it
 qa_data/         SQL constraints and checks, and run_qa.py to run them
-analyse_data/    basic_check.py: sample rows and basic statistics of a table
+analyse_data/    basic_check.py: profile a schema's tables (keys, fill, distinct values, stats, samples)
 dashboard/       queries.sql, export.py and the chart template; output goes to docs/
 docs/            the generated report.md, index.html and data/dashboard.json
 tests/           unit tests (main.py, loader, SQL files, QA rules), run with python main.py debug
 main.py          one entry point: get, model, qa, analyse, dashboard, debug
+pyproject.toml   name, version (read from get_data/__init__.py), dependencies, licence
+LICENSE          GNU General Public License v3
 ```

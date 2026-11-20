@@ -11,10 +11,11 @@ Landing table (default ``games_json``)::
     loaded_at  timestamptz default now()
     + GIN index on data, so ->, ->>, @>, ?, jsonpath (@?, @@) all use the index
 
-Normalised tables, rebuilt from the landing table with plain SQL (see TABLES):
-``games`` (one typed row per game) and ``game_*`` child tables for every list
-or object field.  Keys that are not mapped to a column stay queryable in
-``games_json.data``.
+Normalised tables in schema ``staging``, rebuilt from the landing table with plain
+SQL (see NORMALISED_TABLES): ``staging.games`` (one typed row per game) and
+``staging.game_*`` child tables for every list or object field.  They are a quick,
+wide view of the JSON; the cleaned model is the ``core`` schema built by model_data/.
+Keys that are not mapped to a column stay queryable in ``games_json.data``.
 """
 
 from __future__ import annotations
@@ -31,6 +32,8 @@ from sqlalchemy import Engine, text
 log = logging.getLogger(__name__)
 
 LANDING_TABLE = "games_json"
+STAGING_SCHEMA = "staging"
+LEGACY_SCHEMA = "public"  # where versions before 0.7 built the same tables
 NORMALISED_TABLES = ("games", "game_developers", "game_publishers", "game_genres", "game_categories",
                      "game_tags", "game_languages", "game_screenshots", "game_movies",
                      "game_packages", "game_package_subs")
@@ -172,8 +175,6 @@ def load_landing(path: Path, engine: Engine, table: str = LANDING_TABLE, chunksi
 
     Any sanity problem raises and rolls back, leaving a previous table untouched.
     """
-    if table in NORMALISED_TABLES:
-        raise ValueError(f"{table!r} is reserved for a normalised table; choose another landing table name")
     q = engine.dialect.identifier_preparer.quote
     t = q(table)
     insert = text(f"INSERT INTO {t} (appid, data) VALUES (:appid, CAST(:data AS jsonb))")
@@ -300,29 +301,39 @@ GAME_COLUMNS: list[tuple[str, str]] = [
 ]
 
 
+def _st(name: str) -> str:
+    """A normalised table's name, qualified with the staging schema."""
+    return f"{STAGING_SCHEMA}.{name}"
+
+
+GAMES = _st("games")
+
+
 def _list_table(name: str, key: str, column: str, landing: str, index: bool = True) -> list[str]:
     """One row per array element, keeping the position; keyed by (appid, position)."""
+    table = _st(name)
     stmts = [
-        f"CREATE TABLE {name} AS "
+        f"CREATE TABLE {table} AS "
         f"SELECT appid, ord::int AS position, value AS {column} "
         f"FROM {landing}, jsonb_array_elements_text({_arr(key)}) WITH ORDINALITY AS t(value, ord)",
-        f"ALTER TABLE {name} ADD PRIMARY KEY (appid, position)",
-        f"ALTER TABLE {name} ADD FOREIGN KEY (appid) REFERENCES games(appid) ON DELETE CASCADE",
+        f"ALTER TABLE {table} ADD PRIMARY KEY (appid, position)",
+        f"ALTER TABLE {table} ADD FOREIGN KEY (appid) REFERENCES {GAMES}(appid) ON DELETE CASCADE",
     ]
     if index:
-        stmts.append(f"CREATE INDEX ON {name} ({column})")
+        stmts.append(f"CREATE INDEX ON {table} ({column})")
     return stmts
 
 
 def normalise_statements(landing: str) -> list[str]:
-    """All SQL to rebuild the normalised tables from `landing` (already quoted)."""
+    """All SQL to rebuild the staging tables from `landing` (already quoted)."""
     cols = ",\n       ".join(f"{expr} AS {col}" for col, expr in GAME_COLUMNS)
-    stmts = [f"DROP TABLE IF EXISTS {t} CASCADE" for t in reversed(NORMALISED_TABLES)]
+    stmts = [f"CREATE SCHEMA IF NOT EXISTS {STAGING_SCHEMA}"]
+    stmts += [f"DROP TABLE IF EXISTS {_st(t)} CASCADE" for t in reversed(NORMALISED_TABLES)]
     stmts += [
-        f"CREATE TABLE games AS\nSELECT {cols}\nFROM {landing}",
-        "ALTER TABLE games ADD PRIMARY KEY (appid)",
-        "CREATE INDEX ON games (release_date)",
-        "CREATE INDEX ON games (name)",
+        f"CREATE TABLE {GAMES} AS\nSELECT {cols}\nFROM {landing}",
+        f"ALTER TABLE {GAMES} ADD PRIMARY KEY (appid)",
+        f"CREATE INDEX ON {GAMES} (release_date)",
+        f"CREATE INDEX ON {GAMES} (name)",
     ]
     stmts += _list_table("game_developers", "developers", "developer", landing)
     stmts += _list_table("game_publishers", "publishers", "publisher", landing)
@@ -332,7 +343,7 @@ def normalise_statements(landing: str) -> list[str]:
     stmts += _list_table("game_movies", "movies", "url", landing, index=False)
     stmts += [
         # tags: {"Indie": 22, ...} in most games, but [] when a game has none
-        f"""CREATE TABLE game_tags AS
+        f"""CREATE TABLE {_st("game_tags")} AS
 SELECT appid, tag, max(votes) AS votes FROM (
     SELECT appid, key AS tag,
            CASE WHEN jsonb_typeof(value) = 'number' THEN trunc((value #>> '{{}}')::numeric)::int END AS votes
@@ -340,11 +351,12 @@ SELECT appid, tag, max(votes) AS votes FROM (
     UNION ALL
     SELECT appid, value, NULL FROM {landing}, jsonb_array_elements_text({_arr("tags")})
 ) t GROUP BY appid, tag""",
-        "ALTER TABLE game_tags ADD PRIMARY KEY (appid, tag)",
-        "ALTER TABLE game_tags ADD FOREIGN KEY (appid) REFERENCES games(appid) ON DELETE CASCADE",
-        "CREATE INDEX ON game_tags (tag)",
+        f"ALTER TABLE {_st('game_tags')} ADD PRIMARY KEY (appid, tag)",
+        f"ALTER TABLE {_st('game_tags')} ADD FOREIGN KEY (appid) REFERENCES {GAMES}(appid) "
+        "ON DELETE CASCADE",
+        f"CREATE INDEX ON {_st('game_tags')} (tag)",
         # languages: a list in the Kaggle file, a comma-separated string with HTML in older scrapes
-        f"""CREATE TABLE game_languages AS
+        f"""CREATE TABLE {_st("game_languages")} AS
 WITH supported AS (
     SELECT DISTINCT appid, trim(regexp_replace(value, '<[^>]+>|\\*', '', 'g')) AS language
     FROM {landing}, jsonb_array_elements_text({_arr("supported_languages")})
@@ -359,17 +371,19 @@ WITH supported AS (
 SELECT s.appid, s.language, (a.language IS NOT NULL) AS full_audio
 FROM supported s LEFT JOIN audio a USING (appid, language)
 WHERE s.language <> ''""",
-        "ALTER TABLE game_languages ADD PRIMARY KEY (appid, language)",
-        "ALTER TABLE game_languages ADD FOREIGN KEY (appid) REFERENCES games(appid) ON DELETE CASCADE",
-        "CREATE INDEX ON game_languages (language)",
+        f"ALTER TABLE {_st('game_languages')} ADD PRIMARY KEY (appid, language)",
+        f"ALTER TABLE {_st('game_languages')} ADD FOREIGN KEY (appid) REFERENCES {GAMES}(appid) "
+        "ON DELETE CASCADE",
+        f"CREATE INDEX ON {_st('game_languages')} (language)",
         # packages and their purchase options
-        f"""CREATE TABLE game_packages AS
+        f"""CREATE TABLE {_st("game_packages")} AS
 SELECT appid, p.ord::int AS package_no, p.pkg->>'title' AS title, p.pkg->>'description' AS description
 FROM {landing}, jsonb_array_elements({_arr("packages")}) WITH ORDINALITY AS p(pkg, ord)
 WHERE jsonb_typeof(p.pkg) = 'object'""",
-        "ALTER TABLE game_packages ADD PRIMARY KEY (appid, package_no)",
-        "ALTER TABLE game_packages ADD FOREIGN KEY (appid) REFERENCES games(appid) ON DELETE CASCADE",
-        f"""CREATE TABLE game_package_subs AS
+        f"ALTER TABLE {_st('game_packages')} ADD PRIMARY KEY (appid, package_no)",
+        f"ALTER TABLE {_st('game_packages')} ADD FOREIGN KEY (appid) REFERENCES {GAMES}(appid) "
+        "ON DELETE CASCADE",
+        f"""CREATE TABLE {_st("game_package_subs")} AS
 SELECT appid, p.ord::int AS package_no, s.ord::int AS sub_no,
        s.sub->>'text' AS text, s.sub->>'description' AS description,
        CASE WHEN jsonb_typeof(s.sub->'price') = 'number' THEN (s.sub->>'price')::numeric END AS price
@@ -378,9 +392,9 @@ FROM {landing},
      jsonb_array_elements(CASE WHEN jsonb_typeof(p.pkg->'subs') = 'array' THEN p.pkg->'subs' ELSE '[]'::jsonb END)
          WITH ORDINALITY AS s(sub, ord)
 WHERE jsonb_typeof(s.sub) = 'object'""",
-        "ALTER TABLE game_package_subs ADD PRIMARY KEY (appid, package_no, sub_no)",
-        "ALTER TABLE game_package_subs ADD FOREIGN KEY (appid, package_no) "
-        "REFERENCES game_packages(appid, package_no) ON DELETE CASCADE",
+        f"ALTER TABLE {_st('game_package_subs')} ADD PRIMARY KEY (appid, package_no, sub_no)",
+        f"ALTER TABLE {_st('game_package_subs')} ADD FOREIGN KEY (appid, package_no) "
+        f"REFERENCES {_st('game_packages')}(appid, package_no) ON DELETE CASCADE",
     ]
     return stmts
 
@@ -395,14 +409,32 @@ def normalise(engine: Engine, landing_table: str = LANDING_TABLE) -> dict[str, i
         if not exists:
             raise JsonSanityError(f"Landing table {landing_table} does not exist; load the JSON first")
         conn.execute(text(SAFE_DATE_FN))  # session-local helper; needs plpgsql, which is installed by default
-        log.info("Building %d normalised tables from %s ...", len(NORMALISED_TABLES), landing_table)
+        log.info("Building %d tables in schema %s from %s ...", len(NORMALISED_TABLES),
+                 STAGING_SCHEMA, landing_table)
         for stmt in normalise_statements(landing):
             log.debug("SQL: %s", stmt)
             conn.execute(text(stmt))
         for name in NORMALISED_TABLES:
-            counts[name] = conn.execute(text(f"SELECT count(*) FROM {q(name)}")).scalar_one()
-    width = max(len(n) for n in counts)
+            counts[name] = conn.execute(text(f"SELECT count(*) FROM {_st(name)}")).scalar_one()
+    width = max(len(_st(n)) for n in counts)
     for name, n in counts.items():
-        log.info("  %-*s %10d rows", width, name, n)
-    log.info("Committed: normalised tables rebuilt")
+        log.info("  %-*s %10d rows", width, _st(name), n)
+    log.info("Committed: schema %s rebuilt", STAGING_SCHEMA)
     return counts
+
+
+def legacy_tables(engine: Engine) -> list[str]:
+    """Normalised tables that earlier versions built in public and that still exist."""
+    with engine.connect() as conn:
+        return [name for name in NORMALISED_TABLES if conn.execute(
+            text("SELECT to_regclass(:t) IS NOT NULL"),
+            {"t": f"{LEGACY_SCHEMA}.{name}"}).scalar_one()]
+
+
+def drop_legacy(engine: Engine, names: list[str]) -> None:
+    """Drop the old copies in public, children first, in ONE transaction."""
+    with engine.begin() as conn:
+        for name in reversed(NORMALISED_TABLES):
+            if name in names:
+                conn.execute(text(f"DROP TABLE IF EXISTS {LEGACY_SCHEMA}.{name} CASCADE"))
+    log.info("Dropped the old copies in %s: %s", LEGACY_SCHEMA, ", ".join(names))

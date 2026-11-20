@@ -1,0 +1,54 @@
+# Packaging metadata, written after
+# https://packaging.python.org/en/latest/guides/writing-pyproject-toml/
+#
+#   pip install -e .                  dependencies, and the packages importable from anywhere
+#   pip install -e . --group dev      also the lint tools (pip 25.1 or newer)
+#
+# Installing as a package is not tested yet; that is planned before version 1.0.
+# Until then: pip install -r requirements.txt, then run from the repository: python main.py
+
+[build-system]
+requires = ["hatchling >= 1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "Steam-games-data-pipeline"
+dynamic = ["version"]  # read from get_data/__init__.py, see [tool.hatch.version]
+description = "Kaggle Steam games dataset into PostgreSQL: landing tables, a normalised model, data-quality checks and a dashboard"
+readme = "README.md"
+license = "GPL-3.0-only"  # SPDX expression (PEP 639); full text in LICENSE
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+authors = [{ name = "Wladyslaw" }]
+keywords = ["steam", "kaggle", "postgresql", "jsonb", "data pipeline", "data quality", "etl"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: SQL",
+    "Topic :: Database",
+    # PyPI rejects every upload with a 'Private ::' classifier, so this cannot be published by mistake
+    "Private :: Do Not Upload",
+]
+dependencies = [
+    "pandas >= 2.2",
+    "SQLAlchemy >= 2.0",
+    "psycopg[binary] >= 3.1",
+    "kaggle >= 1.7",
+    "ijson >= 3.2",  # streams games.json one game at a time
+]
+
+[project.urls]
+Repository = "https://github.com/wladq/Steam-games-data-pipeline"
+Issues = "https://github.com/wladq/Steam-games-data-pipeline/issues"
+
+[dependency-groups]
+dev = ["pylint", "ruff"]
+
+[tool.hatch.version]
+path = "get_data/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+# several top-level folders instead of one package named after the project
+packages = ["get_data", "model_data", "qa_data", "analyse_data", "dashboard"]

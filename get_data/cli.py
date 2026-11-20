@@ -6,7 +6,7 @@ at all, or when --json asks for it.
 
   CSV   games.csv  -> header fix -> tidy names -> sanity check -> games_raw
   JSON  games.json -> sanity check + jsonb landing table games_json
-                   -> optional normalised tables (games, game_tags, ...)
+                   -> optional wide tables in schema staging (games, game_tags, ...)
 """
 
 from __future__ import annotations
@@ -75,8 +75,8 @@ def build_parser() -> argparse.ArgumentParser:
     db.add_argument("--table", help=f"target table (default: {DEFAULT_TABLE['csv']} for CSV, "
                                     f"landing table {DEFAULT_TABLE['json']} for JSON)")
     db.add_argument("--normalise-only", action="store_true",
-                    help="skip download and loading; rebuild the normalised tables from the "
-                         "existing JSON landing table")
+                    help="skip download and loading; rebuild the tables in schema staging "
+                         "from the existing JSON landing table")
 
     run = p.add_argument_group("behaviour")
     run.add_argument("-y", "--yes", action="store_true",
@@ -275,12 +275,24 @@ def run_csv(args, csv_path: Path, table: str) -> None:
 # --- JSON steps ----------------------------------------------------------------
 
 def step_normalise(engine, landing_table: str) -> None:
-    names = ", ".join(json_load.NORMALISED_TABLES)
-    if not ask_yes_no(f"Build the normalised tables ({names}) from {landing_table}? "
-                      "Existing tables with these names are replaced."):
-        log.info("Normalised tables not built. Rerun with --normalise-only to build them later")
+    """Offer to rebuild the staging tables, then to drop their old copies in public."""
+    schema = json_load.STAGING_SCHEMA
+    if not ask_yes_no(f"Build the {len(json_load.NORMALISED_TABLES)} wide tables in schema "
+                      f"{schema} (games, game_tags, ...) from {landing_table}? Existing "
+                      f"tables in {schema} are replaced."):
+        log.info("Staging tables not built. Rerun with --normalise-only to build them later")
         return
     json_load.normalise(engine, landing_table)
+
+    legacy = json_load.legacy_tables(engine)
+    if not legacy:
+        return
+    old = json_load.LEGACY_SCHEMA
+    log.info("Earlier versions built the same tables in %s: %s", old, ", ".join(legacy))
+    if ask_yes_no(f"Drop these old copies from {old}? They are now in {schema}.", default=False):
+        json_load.drop_legacy(engine, legacy)
+    else:
+        log.info("Kept the old copies in %s", old)
 
 
 def run_json(args, json_path: Path, table: str) -> None:

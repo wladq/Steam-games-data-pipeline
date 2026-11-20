@@ -60,6 +60,53 @@ def ask_choice(question: str, choices: list[str], default: str | None = None) ->
         print(f"Please answer one of: {', '.join(choices)}.")
 
 
+def ask_int(question: str, default: int) -> int:
+    """Ask for a whole number; Enter keeps the default."""
+    while True:
+        answer = ask_text(question, default=str(default))
+        if answer.isdigit():
+            return int(answer)
+        print("Please type a whole number.")
+
+
+def ask_selection(question: str, options: list[str], default: str | None = None,
+                  many: bool = False, notes: dict[str, str] | None = None,
+                  shortcuts: dict[str, list[str]] | None = None) -> list[str]:
+    """Print the options numbered, then ask for one, or with `many` a comma separated list.
+
+    Each answer item is an option's name (any capitalisation) or its number.  `notes`
+    adds a hint after an option; `shortcuts` maps extra words such as 'all' or 'none'
+    to a ready selection.
+    """
+    notes = notes or {}
+    shortcuts = {word.lower(): picked for word, picked in (shortcuts or {}).items()}
+    by_name = {name.lower(): name for name in options}
+    width = len(str(len(options)))
+    for number, name in enumerate(options, 1):
+        print(f"  {number:>{width}}  {name}" + (f"   {notes[name]}" if name in notes else ""))
+    while True:
+        answer = ask_text(question, default=default)
+        if answer.lower() in shortcuts:
+            return list(shortcuts[answer.lower()])
+        picked, unknown = [], []
+        for item in (part.strip() for part in answer.split(",")):
+            if item.isdigit() and 1 <= int(item) <= len(options):
+                picked.append(options[int(item) - 1])
+            elif item.lower() in by_name:
+                picked.append(by_name[item.lower()])
+            elif item:
+                unknown.append(item)
+        picked = list(dict.fromkeys(picked))  # keep the order, drop repeats
+        if unknown:
+            print(f"Not in the list: {', '.join(unknown)}.")
+        elif not picked:
+            print("Please choose from the list.")
+        elif len(picked) > 1 and not many:
+            print("Please choose only one.")
+        else:
+            return picked
+
+
 def ask_text(question: str, default: str | None = None, flag_hint: str | None = None) -> str:
     """Ask for a non-empty string.  Enter picks the default when there is one."""
     shown = f"{question} [{default}]: " if default else f"{question}: "
