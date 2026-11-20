@@ -21,8 +21,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 # pylint: disable=wrong-import-position
-from dashboard import export  # noqa: E402
-from get_data.sql_runner import read_statements  # noqa: E402
+from dashboard import export
+from get_data.sql_runner import read_statements
 
 
 def snapshot() -> dict:
@@ -83,7 +83,7 @@ class HelpersTest(unittest.TestCase):
     """Value conversion and the small text builders."""
 
     def test_jsonable(self):
-        self.assertEqual(export.jsonable(decimal.Decimal("12")), 12)
+        self.assertEqual(export.jsonable(decimal.Decimal(12)), 12)
         self.assertEqual(export.jsonable(decimal.Decimal("1.5")), 1.5)
         self.assertEqual(export.jsonable(dt.date(2026, 11, 19)), "2026-11-19")
         self.assertEqual(export.jsonable("x"), "x")
@@ -144,7 +144,7 @@ class HtmlTest(unittest.TestCase):
     def test_placeholder_replaced_and_data_round_trips(self):
         self.assertNotIn(export.DATA_PLACEHOLDER, self.html)
         block = re.search(r'<script id="dashboard-data" type="application/json">(.*?)</script>',
-                          self.html, re.S).group(1)
+                          self.html, re.DOTALL).group(1)
         self.assertEqual(json.loads(block), self.data)
 
     def test_a_name_cannot_close_the_script_block(self):

@@ -178,7 +178,8 @@ def run_test_file(path: Path) -> int:
         if exc.code is None or isinstance(exc.code, int):
             return int(exc.code or 0)
         return 1
-    except Exception as exc:  # pylint: disable=broad-except  # keep running the rest
+    except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-except
+        # a crashing test file counts as a failure, and the other files still run
         print(f"  ERROR {type(exc).__name__}: {exc}")
         return 1
     return 0

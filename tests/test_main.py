@@ -11,18 +11,20 @@ Run:  python main.py debug                 (every test in tests/)
 import contextlib
 import io
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import ClassVar
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 # pylint: disable=wrong-import-position
-import main  # noqa: E402
-from get_data.config import DbSettings  # noqa: E402
+import main
+from get_data.config import DbSettings
 
 SETTINGS = DbSettings(username="me", database="steam", host="localhost", port=5433)
 
@@ -289,7 +291,7 @@ class StartupTest(unittest.TestCase):
 class DebugTest(unittest.TestCase):
     """The debug part runs every file in a tests folder and reports each result."""
 
-    FILES = {
+    FILES: ClassVar[dict[str, str]] = {
         "ok": "raise SystemExit(0)",
         "quiet": "x = 1",                     # no exit at all counts as a pass
         "unit_pass": "raise SystemExit(False)",  # what unittest.main() does on success
@@ -298,11 +300,11 @@ class DebugTest(unittest.TestCase):
     }
 
     def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
         for name, body in self.FILES.items():
-            Path(tmp.name, f"{name}.py").write_text(body + "\n", encoding="utf-8")
-        patch = mock.patch.object(main, "TESTS_DIR", Path(tmp.name))
+            (tmp / f"{name}.py").write_text(body + "\n", encoding="utf-8")
+        patch = mock.patch.object(main, "TESTS_DIR", tmp)
         patch.start()
         self.addCleanup(patch.stop)
 

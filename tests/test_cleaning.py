@@ -22,7 +22,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 # pylint: disable=wrong-import-position
-from get_data.sql_runner import read_statements  # noqa: E402
+from get_data.sql_runner import read_statements
 
 SQL_FILES = (
     "model_data/01_schema.sql",
@@ -34,8 +34,8 @@ CHECKS_FILE = ROOT / "qa_data" / "02_checks.sql"
 
 # (one entry of a language list as games.json has it, expected clean names)
 LANGUAGE_CASES = [
-    ("English&amp;amp;amp;amp;lt;strong&amp;amp;amp;amp;gt;"
-     "&amp;amp;amp;amp;lt;/strong&amp;amp;amp;amp;gt;", ["English"]),
+    (("English&amp;amp;amp;amp;lt;strong&amp;amp;amp;amp;gt;"
+      "&amp;amp;amp;amp;lt;/strong&amp;amp;amp;amp;gt;"), ["English"]),
     ("English\r\nRussian\r\nSpanish - Spain\r\nJapanese\r\nCzech",
      ["Czech", "English", "Japanese", "Russian", "Spanish - Spain"]),
     ("Italian \r\n\r\n[b][/b] ", ["Italian"]),
@@ -60,10 +60,10 @@ CLEAN_DEVELOPERS = ["Limited Run Games", "CAPCOM Co., Ltd.", "Valve", "Inc Studi
 def split_languages(entry: str) -> list[str]:
     """Mirror of core.split_languages in model_data/01_schema.sql."""
     t = re.sub(r"&(amp;)+", "&", entry).replace("&lt;", "<").replace("&gt;", ">")
-    t = re.sub(r"&#?[a-z0-9]+;", " ", t, flags=re.I)
+    t = re.sub(r"&#?[a-z0-9]+;", " ", t, flags=re.IGNORECASE)
     out = set()
-    for part in re.split(r",|;|[\r\n]+|(?:\\[rn])+|<br\s*/?>", t, flags=re.I):
-        lang = re.sub(r"\\[rnt]|<[^>]*>|\[/?[a-z]+\]|[*#]", " ", part, flags=re.I)
+    for part in re.split(r",|;|[\r\n]+|(?:\\[rn])+|<br\s*/?>", t, flags=re.IGNORECASE):
+        lang = re.sub(r"\\[rnt]|<[^>]*>|\[/?[a-z]+\]|[*#]", " ", part, flags=re.IGNORECASE)
         lang = re.sub(r"\s+", " ", lang).strip(" '\".")
         if lang:
             out.add("Slovak" if lang == "lang_slovakian" else lang)

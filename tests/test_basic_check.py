@@ -16,6 +16,7 @@ import io
 import sys
 import unittest
 from pathlib import Path
+from typing import ClassVar
 from unittest import mock
 
 from sqlalchemy.dialects import postgresql
@@ -23,7 +24,7 @@ from sqlalchemy.dialects import postgresql
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 # pylint: disable=wrong-import-position
-from analyse_data import basic_check as bc  # noqa: E402
+from analyse_data import basic_check as bc
 
 QUOTE = postgresql.dialect().identifier_preparer.quote
 COLUMNS = [
@@ -157,7 +158,7 @@ class ProfileSqlTest(unittest.TestCase):
 class DescribeTest(unittest.TestCase):
     """The value summary of each column type."""
 
-    STATS = {
+    STATS: ClassVar[dict[str, float | None]] = {
         "n": 200,
         "nn0": 200, "nd0": 200, "lo0": 10.0, "hi0": 4_700_000.0, "av0": 1_900_000.0,
         "md0": 1_600_000.0,

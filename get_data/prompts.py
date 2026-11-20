@@ -69,42 +69,63 @@ def ask_int(question: str, default: int) -> int:
         print("Please type a whole number.")
 
 
-def ask_selection(question: str, options: list[str], default: str | None = None,
-                  many: bool = False, notes: dict[str, str] | None = None,
-                  shortcuts: dict[str, list[str]] | None = None) -> list[str]:
-    """Print the options numbered, then ask for one, or with `many` a comma separated list.
+def ask_one(question: str, options: list[str], default: str | None = None,
+            notes: dict[str, str] | None = None) -> str:
+    """Print the options numbered, then ask for one: its name (any capitalisation) or
+    its number.  `notes` adds a hint after an option."""
+    _print_numbered(options, notes)
+    while True:
+        picked = _pick(ask_text(question, default=default), options)
+        if len(picked) > 1:
+            print("Please choose only one.")
+        elif picked:
+            return picked[0]
 
-    Each answer item is an option's name (any capitalisation) or its number.  `notes`
-    adds a hint after an option; `shortcuts` maps extra words such as 'all' or 'none'
-    to a ready selection.
+
+def ask_many(question: str, options: list[str], default: str | None = None,
+             notes: dict[str, str] | None = None,
+             shortcuts: dict[str, list[str]] | None = None) -> list[str]:
+    """Like ask_one, but the answer is a comma separated list of names or numbers.
+
+    `shortcuts` maps extra words such as 'all' or 'none' to a ready selection.
     """
-    notes = notes or {}
+    _print_numbered(options, notes)
     shortcuts = {word.lower(): picked for word, picked in (shortcuts or {}).items()}
-    by_name = {name.lower(): name for name in options}
-    width = len(str(len(options)))
-    for number, name in enumerate(options, 1):
-        print(f"  {number:>{width}}  {name}" + (f"   {notes[name]}" if name in notes else ""))
     while True:
         answer = ask_text(question, default=default)
         if answer.lower() in shortcuts:
             return list(shortcuts[answer.lower()])
-        picked, unknown = [], []
-        for item in (part.strip() for part in answer.split(",")):
-            if item.isdigit() and 1 <= int(item) <= len(options):
-                picked.append(options[int(item) - 1])
-            elif item.lower() in by_name:
-                picked.append(by_name[item.lower()])
-            elif item:
-                unknown.append(item)
-        picked = list(dict.fromkeys(picked))  # keep the order, drop repeats
-        if unknown:
-            print(f"Not in the list: {', '.join(unknown)}.")
-        elif not picked:
-            print("Please choose from the list.")
-        elif len(picked) > 1 and not many:
-            print("Please choose only one.")
-        else:
+        picked = _pick(answer, options)
+        if picked:
             return picked
+
+
+def _print_numbered(options: list[str], notes: dict[str, str] | None) -> None:
+    notes = notes or {}
+    width = len(str(len(options)))
+    for number, name in enumerate(options, 1):
+        print(f"  {number:>{width}}  {name}" + (f"   {notes[name]}" if name in notes else ""))
+
+
+def _pick(answer: str, options: list[str]) -> list[str]:
+    """The options a comma separated answer names, by name or number, in order and
+    without repeats.  An empty list, after saying why, when an item is not an option
+    or nothing is named."""
+    by_name = {name.lower(): name for name in options}
+    picked, unknown = [], []
+    for item in (part.strip() for part in answer.split(",")):
+        if item.isdigit() and 1 <= int(item) <= len(options):
+            picked.append(options[int(item) - 1])
+        elif item.lower() in by_name:
+            picked.append(by_name[item.lower()])
+        elif item:
+            unknown.append(item)
+    if unknown:
+        print(f"Not in the list: {', '.join(unknown)}.")
+        return []
+    if not picked:
+        print("Please choose from the list.")
+    return list(dict.fromkeys(picked))  # keep the order, drop repeats
 
 
 def ask_text(question: str, default: str | None = None, flag_hint: str | None = None) -> str:

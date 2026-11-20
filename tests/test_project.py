@@ -17,7 +17,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 # pylint: disable=wrong-import-position
-from get_data import PROJECT_NAME, __version__  # noqa: E402
+from get_data import PROJECT_NAME, __version__
 
 try:
     import tomllib  # Python 3.11+
@@ -54,7 +54,8 @@ class PyprojectTest(unittest.TestCase):
         self.assertIn("version", self.project["dynamic"])
         self.assertNotIn("version", self.project)
         path = ROOT / self.data["tool"]["hatch"]["version"]["path"]
-        found = re.search(r'^__version__ *= *"([^"]+)"', path.read_text(encoding="utf-8"), re.M)
+        found = re.search(r'^__version__ *= *"([^"]+)"', path.read_text(encoding="utf-8"),
+                          re.MULTILINE)
         self.assertEqual(found.group(1), __version__)
 
     def test_dependencies_match_requirements_txt(self):

@@ -60,6 +60,7 @@ def connect_engine(settings: DbSettings, attempts: int = PASSWORD_ATTEMPTS) -> t
 
 
 def make_engine(settings: DbSettings, password: str) -> Engine:
+    """A Postgres engine through psycopg; nothing connects until the first use."""
     if importlib.util.find_spec("psycopg") is None:
         raise RuntimeError('The Postgres driver is missing. Run: pip install "psycopg[binary]"')
     url = URL.create(
@@ -77,6 +78,7 @@ def make_engine(settings: DbSettings, password: str) -> Engine:
 
 
 def test_connection(engine: Engine) -> str:
+    """Open one connection and return the server's version string."""
     with engine.connect() as conn:
         return conn.execute(text("SELECT version()")).scalar_one()
 
@@ -91,7 +93,8 @@ def upload_with_primary_key(df: pd.DataFrame, engine: Engine, table: str, pk_col
     quote = engine.dialect.identifier_preparer.quote
     with engine.begin() as conn:
         log.info("Uploading %d rows to table %s (replacing it if it exists) ...", len(df), table)
-        df.to_sql(table, conn, if_exists="replace", index=False, chunksize=chunksize, method="multi")
+        df.to_sql(table, conn, if_exists="replace", index=False, chunksize=chunksize,
+                  method="multi")
         log.info("Adding primary key on %s ...", pk_column)
         conn.execute(text(f"ALTER TABLE {quote(table)} ADD PRIMARY KEY ({quote(pk_column)})"))
     log.info("Committed: table %s now holds %d rows with primary key %s", table, len(df), pk_column)

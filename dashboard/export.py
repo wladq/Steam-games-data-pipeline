@@ -27,7 +27,14 @@ sys.path.insert(0, str(PROJECT_ROOT))  # so `get_data` imports when run as a scr
 # pylint: disable=wrong-import-position
 from get_data import PROJECT_NAME, __version__
 from get_data.formatting import percent
-from get_data.sql_runner import add_common_args, autocommit, execute, read_statements, run_step
+from get_data.sql_runner import (
+    add_common_args,
+    autocommit,
+    execute,
+    read_statements,
+    run_as_script,
+    run_step,
+)
 from qa_data import run_qa
 
 log = logging.getLogger("dashboard")
@@ -159,10 +166,10 @@ def render_markdown(data: dict) -> str:  # pylint: disable=too-many-locals
     lines = [
         f"# {data['project']}: data snapshot",
         "",
-        f"Generated {data['generated']} from the `core` model ({data['project']} "
-        f"{data['version']}). "
-        "Interactive charts: [index.html](index.html), opened from a local clone or GitHub "
-        "Pages. Refresh with `python main.py dashboard`.",
+        (f"Generated {data['generated']} from the `core` model ({data['project']} "
+         f"{data['version']}). "
+         "Interactive charts: [index.html](index.html), opened from a local clone or GitHub "
+         "Pages. Refresh with `python main.py dashboard`."),
         "",
         "## Headline numbers",
         "",
@@ -175,10 +182,10 @@ def render_markdown(data: dict) -> str:  # pylint: disable=too-many-locals
         "",
         "## Data quality",
         "",
-        f"**{'✅ OK' if qa['ok'] else '❌ PROBLEMS FOUND'}**: "
-        f"{qa['constraints_valid']} of {qa['constraints']} constraints valid; checks: "
-        f"{checks['pass']} passed, {checks['warn']} warnings, {checks['FAIL']} failed, "
-        f"{checks['ERROR']} could not run, {checks['skip']} skipped.",
+        (f"**{'✅ OK' if qa['ok'] else '❌ PROBLEMS FOUND'}**: "
+         f"{qa['constraints_valid']} of {qa['constraints']} constraints valid; checks: "
+         f"{checks['pass']} passed, {checks['warn']} warnings, {checks['FAIL']} failed, "
+         f"{checks['ERROR']} could not run, {checks['skip']} skipped."),
     ]
     if not qa["constraints"]:
         lines += ["", "No constraints found: run `python main.py qa` after each model build."]
@@ -204,8 +211,8 @@ def render_markdown(data: dict) -> str:  # pylint: disable=too-many-locals
         "",
         "## Releases per year",
         "",
-        f"The last year, {years[-1]['year'] if years else '-'}, is partial: the data is a "
-        "snapshot.",
+        (f"The last year, {years[-1]['year'] if years else '-'}, is partial: the data is a "
+         "snapshot."),
         "",
         bar_table(years, "year", "games", "Year"),
         "",
@@ -232,8 +239,8 @@ def render_markdown(data: dict) -> str:  # pylint: disable=too-many-locals
         "",
         "## Review concentration",
         "",
-        "Reviews pile up on a few hits, so statistics weighted by reviews mostly describe "
-        "blockbusters.",
+        ("Reviews pile up on a few hits, so statistics weighted by reviews mostly describe "
+         "blockbusters."),
         "",
         md_table(["Top games", "Share of all reviews"],
                  [[f"{p} %", f"{share_at(data['review_concentration'], p)} %"]
@@ -289,12 +296,5 @@ def run(args: argparse.Namespace) -> int:
     return run_step(args, work, log)
 
 
-def main() -> int:
-    """Entry point of `python dashboard/export.py`."""
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    add_arguments(parser)
-    return run(parser.parse_args())
-
-
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(run_as_script(__doc__, add_arguments, run))

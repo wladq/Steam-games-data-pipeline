@@ -18,7 +18,14 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))  # so `get_data` imports when run as a script
 
 # pylint: disable=wrong-import-position
-from get_data.sql_runner import add_common_args, autocommit, execute, read_statements, run_step
+from get_data.sql_runner import (
+    add_common_args,
+    autocommit,
+    execute,
+    read_statements,
+    run_as_script,
+    run_step,
+)
 
 log = logging.getLogger("qa_data")
 
@@ -54,7 +61,8 @@ def run_constraints(conn) -> dict[str, tuple[str, str]]:
         log.debug("%s:%d %s", CONSTRAINTS_FILE.name, stmt.line, stmt.summary)
         try:
             execute(conn, stmt.sql)
-        except Exception as exc:  # pylint: disable=broad-except
+        except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-except
+            # reported per constraint, so one failure cannot stop the others
             status = "VIOLATED" if validating and sqlstate(exc) == CHECK_VIOLATION else "ERROR"
             results.setdefault(name, (status, first_line(exc)))  # keep the first problem
             log.debug("%s failed: %s", name, first_line(exc))
@@ -73,7 +81,8 @@ def run_checks(conn) -> list[dict]:
         meta = stmt.meta
         name = meta.get("check")
         if not name:
-            log.warning("%s line %d has no '-- check:' header, skipped", CHECKS_FILE.name, stmt.line)
+            log.warning("%s line %d has no '-- check:' header, skipped",
+                        CHECKS_FILE.name, stmt.line)
             continue
         result = {"check": name, "severity": meta.get("severity", "error").lower(),
                   "about": meta.get("about", ""), "failed": None, "status": "", "detail": ""}
@@ -90,8 +99,10 @@ def run_checks(conn) -> list[dict]:
             result.update(status="skip", detail=f"{', '.join(missing)} does not exist")
             continue
         try:
-            failed = execute(conn, f"SELECT count(*) FROM (\n{stmt.sql}\n) AS broken_rows").scalar_one()
-        except Exception as exc:  # pylint: disable=broad-except
+            failed = execute(
+                conn, f"SELECT count(*) FROM (\n{stmt.sql}\n) AS broken_rows").scalar_one()
+        except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-except
+            # reported as this check's ERROR, so one broken query cannot stop the others
             result.update(status="ERROR", detail=first_line(exc))
             continue
 
@@ -100,8 +111,10 @@ def run_checks(conn) -> list[dict]:
             result["status"] = "pass"
             continue
         result["status"] = "FAIL" if result["severity"] == "error" else "warn"
-        sample = execute(conn, f"SELECT * FROM (\n{stmt.sql}\n) AS broken_rows LIMIT 3").mappings().all()
-        log.debug("%s: %d rows break the rule, e.g. %s", name, failed, [dict(row) for row in sample])
+        sample = execute(
+            conn, f"SELECT * FROM (\n{stmt.sql}\n) AS broken_rows LIMIT 3").mappings().all()
+        log.debug("%s: %d rows break the rule, e.g. %s", name, failed,
+                  [dict(row) for row in sample])
     return results
 
 
@@ -125,9 +138,10 @@ def report(constraints: dict[str, tuple[str, str]] | None, checks: list[dict]) -
     log.info("  %-6s  %-8s  %10s  %-*s  %s", "status", "severity", "rows", width, "check", "about")
     for c in checks:
         rows = "" if c["failed"] is None else f"{c['failed']:,}"
-        log.info("  %-6s  %-8s  %10s  %-*s  %s", c["status"], c["severity"], rows, width, c["check"],
-                 c["detail"] or c["about"])
-    tally = {s: sum(c["status"] == s for c in checks) for s in ("pass", "warn", "FAIL", "ERROR", "skip")}
+        log.info("  %-6s  %-8s  %10s  %-*s  %s", c["status"], c["severity"], rows,
+                 width, c["check"], c["detail"] or c["about"])
+    statuses = ("pass", "warn", "FAIL", "ERROR", "skip")
+    tally = {s: sum(c["status"] == s for c in checks) for s in statuses}
     log.info("  %d passed, %d warnings, %d failed, %d could not run, %d skipped",
              tally["pass"], tally["warn"], tally["FAIL"], tally["ERROR"], tally["skip"])
     return ok and not tally["FAIL"] and not tally["ERROR"]
@@ -160,12 +174,5 @@ def run(args: argparse.Namespace) -> int:
     return run_step(args, work, log)
 
 
-def main() -> int:
-    """Entry point of `python qa_data/run_qa.py`."""
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    add_arguments(parser)
-    return run(parser.parse_args())
-
-
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(run_as_script(__doc__, add_arguments, run))

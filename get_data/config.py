@@ -26,12 +26,15 @@ DEFAULT_PORT = 5433
 
 @dataclass
 class DbSettings:
+    """Where to connect: everything but the password."""
+
     username: str
     database: str
     host: str = DEFAULT_HOST
     port: int = DEFAULT_PORT
 
     def describe(self) -> str:
+        """user@host:port/database, for prompts and log lines."""
         return f"{self.username}@{self.host}:{self.port}/{self.database}"
 
 
@@ -71,6 +74,7 @@ def resolve_settings(args, config_path: Path) -> tuple[DbSettings, dict]:
 
 
 def get_password(settings: DbSettings) -> str:
+    """PGPASSWORD when it is set, otherwise a hidden prompt.  Nothing is stored."""
     env = os.environ.get("PGPASSWORD")
     if env:
         log.info("Using the password from the PGPASSWORD environment variable")
@@ -83,8 +87,9 @@ def offer_to_save(settings: DbSettings, saved: dict, config_path: Path) -> None:
     current = asdict(settings)
     if {k: saved.get(k) for k in current} == current:
         return  # nothing new to save
-    if not ask_yes_no(f"Save {settings.describe()} to {config_path.name} for next time? (password is not saved)",
-                      default=False):
+    question = (f"Save {settings.describe()} to {config_path.name} for next time? "
+                "(password is not saved)")
+    if not ask_yes_no(question, default=False):
         return
     config_path.write_text(json.dumps(current, indent=2) + "\n", encoding="utf-8")
     log.info("Saved connection settings to %s (git-ignored)", config_path)

@@ -19,6 +19,7 @@ safety net, not a guarantee, before sharing a log file.
 
 from __future__ import annotations
 
+import contextlib
 import getpass
 import logging
 import os
@@ -35,7 +36,8 @@ MAX_BYTES = 5_000_000
 BACKUPS = 3
 
 # never treated as secrets, even if they happen to be a user or database name
-_SAFE_WORDS = {"localhost", "postgres", "public", "steam", "games", "user", "users", "admin", "root", "none"}
+_SAFE_WORDS = {"localhost", "postgres", "public", "steam", "games", "user", "users",
+               "admin", "root", "none"}
 
 _EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 _TAILNET = re.compile(r"\b[\w-]+(?:\.[\w-]+)*\.ts\.net\b", re.IGNORECASE)
@@ -43,7 +45,8 @@ _IPV4 = re.compile(r"(?<![\d.])(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?![\d.
 # full or partly written IPv6 and MAC addresses; '::' short forms are left alone
 # on purpose, because they are indistinguishable from SQL casts such as added::date
 _COLON_ADDR = re.compile(r"(?<![\w:])(?:[0-9a-f]{1,4}:){3,7}[0-9a-f]{1,4}(?![\w:])", re.IGNORECASE)
-_USER_DIR = re.compile(r"(?:\b[A-Za-z]:[\\/]+Users[\\/]+|/home/|/Users/)[^\\/\s'\":;,<>|]+", re.IGNORECASE)
+_USER_DIR = re.compile(r"(?:\b[A-Za-z]:[\\/]+Users[\\/]+|/home/|/Users/)[^\\/\s'\":;,<>|]+",
+                       re.IGNORECASE)
 
 
 def _ipv4(match: re.Match) -> str:
@@ -77,9 +80,9 @@ class Redactor:
         if self._words:
             if self._pattern is None:
                 longest_first = sorted(self._words, key=len, reverse=True)
+                words = "|".join(map(re.escape, longest_first))
                 self._pattern = re.compile(
-                    r"(?<![A-Za-z0-9_])(?:" + "|".join(map(re.escape, longest_first)) + r")(?![A-Za-z0-9_])",
-                    re.IGNORECASE)
+                    r"(?<![A-Za-z0-9_])(?:" + words + r")(?![A-Za-z0-9_])", re.IGNORECASE)
             text = self._pattern.sub(lambda m: self._words[m.group(0).lower()], text)
         return text
 
@@ -96,13 +99,13 @@ def register_connection(user=None, host=None, database=None) -> None:
 
 def _register_machine() -> None:
     users = {os.environ.get("USERNAME"), os.environ.get("USER"), Path.home().name}
-    try:
+    # no user database, e.g. in a container: getuser raises OSError since Python 3.13,
+    # and KeyError or ImportError (no pwd module) before that
+    with contextlib.suppress(OSError, KeyError, ImportError):
         users.add(getpass.getuser())
-    except Exception:  # pylint: disable=broad-except  # no user database, e.g. in a container
-        pass
     for name in users:
         REDACTOR.add(name, "<user>")
-    for name in {os.environ.get("COMPUTERNAME"), platform.node(), socket.gethostname()}:
+    for name in (os.environ.get("COMPUTERNAME"), platform.node(), socket.gethostname()):
         REDACTOR.add(name, "<computer>")
     for word in os.environ.get("GET_DATA_REDACT", "").split(","):
         REDACTOR.add(word, "<redacted>")

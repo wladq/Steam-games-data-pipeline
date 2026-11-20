@@ -19,12 +19,13 @@ SPLIT_HEADER = ["Discount", "DLC count"]
 
 
 class SanityError(ValueError):
-    pass
+    """The CSV has shifted columns, or its appids cannot be a primary key."""
 
 
 # --- reading -----------------------------------------------------------------
 
 def read_header(csv_path: Path) -> list[str]:
+    """The column names in the CSV's header row, without reading any data."""
     return pd.read_csv(csv_path, nrows=0).columns.tolist()
 
 
@@ -34,7 +35,8 @@ def read_csv(csv_path: Path, names: list[str] | None = None) -> pd.DataFrame:
     Only empty cells count as missing.  pandas would otherwise turn text such as
     'None', 'NA', 'N/A' or 'null' into NaN, erasing a game or company with that name.
     """
-    kwargs = dict(index_col=False, low_memory=False, keep_default_na=False, na_values=[""])
+    kwargs = {"index_col": False, "low_memory": False, "keep_default_na": False,
+              "na_values": [""]}
     if names is not None:
         return pd.read_csv(csv_path, header=0, names=names, **kwargs)
     return pd.read_csv(csv_path, **kwargs)
@@ -43,6 +45,7 @@ def read_csv(csv_path: Path, names: list[str] | None = None) -> pd.DataFrame:
 # --- header repair -------------------------------------------------------------
 
 def header_is_shifted(columns: list[str]) -> bool:
+    """True while the header still holds the glued 'DiscountDLC count' name."""
     return GLUED_HEADER in columns
 
 
@@ -101,7 +104,8 @@ def sanity_check(df: pd.DataFrame) -> dict:
     ids = pd.to_numeric(df[appid_col], errors="coerce")
     bad_ids = df.loc[ids.isna(), appid_col]
     if len(bad_ids):
-        raise SanityError(f"{len(bad_ids)} rows have a missing or non-numeric appid, e.g. {_examples(bad_ids)}")
+        raise SanityError(f"{len(bad_ids)} rows have a missing or non-numeric appid, "
+                          f"e.g. {_examples(bad_ids)}")
     dup_ids = df.loc[ids.duplicated(keep=False), appid_col].drop_duplicates()
     if len(dup_ids):
         raise SanityError(f"{len(dup_ids)} appids appear more than once, e.g. {_examples(dup_ids)}")
@@ -114,8 +118,8 @@ def sanity_check(df: pd.DataFrame) -> dict:
     disc_num = pd.to_numeric(disc, errors="coerce")
     bad_disc = disc[disc.notna() & ~disc_num.between(0, 100)]
     if len(bad_disc):
-        raise SanityError(f"{len(bad_disc)} discount values are not numbers in 0-100, e.g. {_examples(bad_disc)}. "
-                          "The columns are probably shifted.")
+        raise SanityError(f"{len(bad_disc)} discount values are not numbers in 0-100, "
+                          f"e.g. {_examples(bad_disc)}. The columns are probably shifted.")
 
     return {"appid_column": appid_col, "rows": len(df), "columns": df.shape[1],
             "blank_discounts": int(disc.isna().sum())}

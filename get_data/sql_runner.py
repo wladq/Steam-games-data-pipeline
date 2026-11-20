@@ -3,6 +3,7 @@
 - common command-line flags, logging and connection
 - the frame every step runs in: run_step / guarded turn the step's work into an exit
   code (0 done, 1 error with the traceback in debug.log, 130 interrupted)
+- run_as_script: what a step does when it is run as its own script
 - split a .sql file into statements, keeping each statement's leading comments
 - execute raw SQL without any parameter parsing, so '%' and ':' are literal
 """
@@ -143,6 +144,18 @@ def run_step(args: argparse.Namespace, work: Callable[[Engine], int | None],
     return guarded(with_engine, logger, args.log_dir)
 
 
+def run_as_script(doc: str, add_arguments: Callable[[argparse.ArgumentParser], None],
+                  run: Callable[[argparse.Namespace], int],
+                  argv: list[str] | None = None) -> int:
+    """`python <folder>/<step>.py`: parse the step's own flags, then return run(args).
+
+    The help's description is the first line of `doc`, the step's module docstring.
+    """
+    parser = argparse.ArgumentParser(description=doc.splitlines()[0])
+    add_arguments(parser)
+    return run(parser.parse_args(argv))
+
+
 # --- SQL files -------------------------------------------------------------------
 
 @dataclass
@@ -164,11 +177,28 @@ class Statement:
 
     @property
     def summary(self) -> str:
+        """The SQL on one line, cut to 90 characters, for log messages."""
         return re.sub(r"\s+", " ", self.sql)[:90]
 
 
+def _to_statement(text: str, line: int) -> Statement | None:
+    """One piece between semicolons as a Statement, the comment lines directly above
+    its SQL as its comments; None when the piece holds no SQL."""
+    comments, body = [], []
+    for raw in text.strip().splitlines():
+        stripped = raw.strip()
+        if not body and stripped.startswith("--"):
+            comments.append(stripped[2:].strip())
+        elif not body and not stripped:
+            comments.clear()  # a blank line ends a file header or section title
+        else:
+            body.append(raw)
+    return Statement("\n".join(body).strip(), line, comments) if body else None
+
+
 def split_statements(sql: str) -> list[Statement]:
-    """Split on ';' outside quotes, $$ blocks and -- comments.  /* */ comments are not supported."""
+    """Split on ';' outside quotes, $$ blocks and -- comments.  /* */ comments are not
+    supported."""
     statements: list[Statement] = []
     buf: list[str] = []
     line, start_line = 1, 1
@@ -176,19 +206,10 @@ def split_statements(sql: str) -> list[Statement]:
     in_quote, dollar = False, None
 
     def emit() -> None:
-        text = "".join(buf).strip()
+        statement = _to_statement("".join(buf), start_line)
         buf.clear()
-        comments, body = [], []
-        for raw in text.splitlines():
-            stripped = raw.strip()
-            if not body and stripped.startswith("--"):
-                comments.append(stripped[2:].strip())
-            elif not body and not stripped:
-                comments.clear()  # a blank line ends a file header or section title
-            else:
-                body.append(raw)
-        if body:
-            statements.append(Statement("\n".join(body).strip(), start_line, comments))
+        if statement:
+            statements.append(statement)
 
     while i < n:
         ch = sql[i]
@@ -231,6 +252,7 @@ def split_statements(sql: str) -> list[Statement]:
 
 
 def read_statements(path: Path) -> list[Statement]:
+    """The statements of a UTF-8 .sql file, split as split_statements does."""
     return split_statements(path.read_text(encoding="utf-8"))
 
 

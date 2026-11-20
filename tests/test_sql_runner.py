@@ -18,8 +18,8 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 # pylint: disable=wrong-import-position
-from get_data import db, sql_runner  # noqa: E402
-from get_data.config import DbSettings  # noqa: E402
+from get_data import db, sql_runner
+from get_data.config import DbSettings
 
 LOGGER = "get_data.sql_runner"
 
@@ -152,6 +152,25 @@ class SplitStatementsTest(unittest.TestCase):
         stmt = sql_runner.split_statements(sql)[0]
         self.assertEqual(stmt.meta, {"check": "price_negative", "severity": "error"})
         self.assertEqual(stmt.sql, "SELECT 1")
+
+
+class RunAsScriptTest(unittest.TestCase):
+    """run_as_script parses the step's own flags and returns run's exit code."""
+
+    def test_flags_are_parsed_and_the_exit_code_returned(self):
+        def add_arguments(parser):
+            parser.add_argument("--checks-only", action="store_true")
+
+        seen = []
+
+        def run(parsed):
+            seen.append(parsed)
+            return 7
+
+        code = sql_runner.run_as_script("Doc line.\n\nMore.", add_arguments, run,
+                                        ["--checks-only"])
+        self.assertEqual(code, 7)
+        self.assertTrue(seen[0].checks_only)
 
 
 if __name__ == "__main__":

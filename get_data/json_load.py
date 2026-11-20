@@ -23,9 +23,10 @@ from __future__ import annotations
 import json
 import logging
 from collections import Counter, defaultdict
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterator
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from sqlalchemy import Engine
@@ -42,9 +43,9 @@ def text(sql: str):
 LANDING_TABLE = "games_json"
 STAGING_SCHEMA = "staging"
 LEGACY_SCHEMA = "public"  # where versions before 0.7 built the same tables
-NORMALISED_TABLES = ("games", "game_developers", "game_publishers", "game_genres", "game_categories",
-                     "game_tags", "game_languages", "game_screenshots", "game_movies",
-                     "game_packages", "game_package_subs")
+NORMALISED_TABLES = ("games", "game_developers", "game_publishers", "game_genres",
+                     "game_categories", "game_tags", "game_languages", "game_screenshots",
+                     "game_movies", "game_packages", "game_package_subs")
 
 
 NO_GAMES = "The file contains no games (the top level must be an object keyed by appid)"
@@ -63,14 +64,19 @@ def iter_games(path: Path) -> Iterator[tuple[str, Any]]:
     serialise back to JSON and are typed correctly in the inventory.
     """
     try:
-        import ijson
+        # imported here, so a missing ijson becomes the clear message below
+        import ijson  # pylint: disable=import-outside-toplevel
     except ImportError:
-        raise JsonSanityError("Streaming JSON needs the 'ijson' package. Run: pip install ijson") from None
+        raise JsonSanityError(
+            "Streaming JSON needs the 'ijson' package. Run: pip install ijson"
+        ) from None
 
     backend = getattr(ijson, "backend_name", None) or getattr(ijson, "backend", "?")
-    log.info("Streaming %s (%.0f MB) with ijson, backend %s", path.name, path.stat().st_size / 1e6, backend)
+    size_mb = path.stat().st_size / 1e6
+    log.info("Streaming %s (%.0f MB) with ijson, backend %s", path.name, size_mb, backend)
     if str(backend) == "python":
-        log.warning("ijson is using its slow pure-Python backend; a large file can take many minutes")
+        log.warning("ijson is using its slow pure-Python backend; "
+                    "a large file can take many minutes")
 
     with path.open("rb") as fh:
         try:
@@ -143,13 +149,16 @@ class Inventory:
         return appid
 
     def mixed_type_keys(self) -> dict[str, Counter]:
+        """Keys that hold more than one JSON type across the games."""
         return {k: c for k, c in self.key_types.items() if len(c) > 1}
 
     def log_summary(self) -> None:
-        log.info("Sanity check passed: %d games, every appid numeric and unique, every entry an object",
-                 self.games)
+        """Log the result: games, NUL bytes removed, and each key's presence and types."""
+        log.info("Sanity check passed: %d games, every appid numeric and unique, "
+                 "every entry an object", self.games)
         if self.nul_bytes:
-            log.warning("Removed %d NUL (\\u0000) characters, which Postgres cannot store", self.nul_bytes)
+            log.warning("Removed %d NUL (\\u0000) characters, which Postgres cannot store",
+                        self.nul_bytes)
         log.info("%d distinct keys (present %% of games, JSON types):", len(self.key_types))
         width = max(len(k) for k in self.key_types) if self.key_types else 10
         for key, types in sorted(self.key_types.items()):
@@ -178,7 +187,8 @@ def scan(path: Path) -> Inventory:
 
 # --- landing table -------------------------------------------------------------
 
-def load_landing(path: Path, engine: Engine, table: str = LANDING_TABLE, chunksize: int = 500) -> Inventory:
+def load_landing(path: Path, engine: Engine, table: str = LANDING_TABLE,
+                 chunksize: int = 500) -> Inventory:
     """Validate and insert in ONE pass and ONE transaction.
 
     Any sanity problem raises and rolls back, leaving a previous table untouched.
@@ -239,14 +249,17 @@ def _bool(key: str) -> str:
 
 def _arr(key: str) -> str:
     """The key as a jsonb array, or an empty array when absent or not an array."""
-    return f"CASE WHEN jsonb_typeof(data->'{key}') = 'array' THEN data->'{key}' ELSE '[]'::jsonb END"
+    return (f"CASE WHEN jsonb_typeof(data->'{key}') = 'array' THEN data->'{key}' "
+            "ELSE '[]'::jsonb END")
 
 
 def _obj(key: str) -> str:
-    return f"CASE WHEN jsonb_typeof(data->'{key}') = 'object' THEN data->'{key}' ELSE '{{}}'::jsonb END"
+    return (f"CASE WHEN jsonb_typeof(data->'{key}') = 'object' THEN data->'{key}' "
+            "ELSE '{}'::jsonb END")
 
 
-# release_date is "Oct 21, 2008" in the Kaggle file; newer scraper versions use {"date": ..., "coming_soon": ...}
+# release_date is "Oct 21, 2008" in the Kaggle file; newer scraper versions use
+# {"date": ..., "coming_soon": ...}
 _RELEASE_RAW = "COALESCE(data->'release_date'->>'date', data->>'release_date')"
 
 SAFE_DATE_FN = """
@@ -269,8 +282,8 @@ GAME_COLUMNS: list[tuple[str, str]] = [
     ("name", _s("name")),
     ("release_date_raw", _RELEASE_RAW),
     ("release_date", f"pg_temp.safe_date({_RELEASE_RAW})"),
-    ("coming_soon", "CASE WHEN jsonb_typeof(data->'release_date'->'coming_soon') = 'boolean' "
-                    "THEN (data->'release_date'->>'coming_soon')::boolean END"),
+    ("coming_soon", ("CASE WHEN jsonb_typeof(data->'release_date'->'coming_soon') = 'boolean' "
+                     "THEN (data->'release_date'->>'coming_soon')::boolean END")),
     ("required_age", _int("required_age")),
     ("is_free", _bool("is_free")),
     ("price", _num("price")),
@@ -295,10 +308,10 @@ GAME_COLUMNS: list[tuple[str, str]] = [
     ("recommendations", _int("recommendations")),
     ("notes", _s("notes")),
     ("estimated_owners", _s("estimated_owners")),
-    ("owners_min", "CASE WHEN data->>'estimated_owners' ~ '^[0-9]+ - [0-9]+$' "
-                   "THEN split_part(data->>'estimated_owners', ' - ', 1)::bigint END"),
-    ("owners_max", "CASE WHEN data->>'estimated_owners' ~ '^[0-9]+ - [0-9]+$' "
-                   "THEN split_part(data->>'estimated_owners', ' - ', 2)::bigint END"),
+    ("owners_min", ("CASE WHEN data->>'estimated_owners' ~ '^[0-9]+ - [0-9]+$' "
+                    "THEN split_part(data->>'estimated_owners', ' - ', 1)::bigint END")),
+    ("owners_max", ("CASE WHEN data->>'estimated_owners' ~ '^[0-9]+ - [0-9]+$' "
+                    "THEN split_part(data->>'estimated_owners', ' - ', 2)::bigint END")),
     ("positive", _int("positive")),
     ("negative", _int("negative")),
     ("average_playtime_forever", _int("average_playtime_forever")),
@@ -321,9 +334,10 @@ def _list_table(name: str, key: str, column: str, landing: str, index: bool = Tr
     """One row per array element, keeping the position; keyed by (appid, position)."""
     table = _st(name)
     stmts = [
-        f"CREATE TABLE {table} AS "
-        f"SELECT appid, ord::int AS position, value AS {column} "
-        f"FROM {landing}, jsonb_array_elements_text({_arr(key)}) WITH ORDINALITY AS t(value, ord)",
+        (f"CREATE TABLE {table} AS "
+         f"SELECT appid, ord::int AS position, value AS {column} "
+         f"FROM {landing}, jsonb_array_elements_text({_arr(key)}) "
+         "WITH ORDINALITY AS t(value, ord)"),
         f"ALTER TABLE {table} ADD PRIMARY KEY (appid, position)",
         f"ALTER TABLE {table} ADD FOREIGN KEY (appid) REFERENCES {GAMES}(appid) ON DELETE CASCADE",
     ]
@@ -354,14 +368,15 @@ def normalise_statements(landing: str) -> list[str]:
         f"""CREATE TABLE {_st("game_tags")} AS
 SELECT appid, tag, max(votes) AS votes FROM (
     SELECT appid, key AS tag,
-           CASE WHEN jsonb_typeof(value) = 'number' THEN trunc((value #>> '{{}}')::numeric)::int END AS votes
+           CASE WHEN jsonb_typeof(value) = 'number'
+                THEN trunc((value #>> '{{}}')::numeric)::int END AS votes
     FROM {landing}, jsonb_each({_obj("tags")})
     UNION ALL
     SELECT appid, value, NULL FROM {landing}, jsonb_array_elements_text({_arr("tags")})
 ) t GROUP BY appid, tag""",
         f"ALTER TABLE {_st('game_tags')} ADD PRIMARY KEY (appid, tag)",
-        f"ALTER TABLE {_st('game_tags')} ADD FOREIGN KEY (appid) REFERENCES {GAMES}(appid) "
-        "ON DELETE CASCADE",
+        (f"ALTER TABLE {_st('game_tags')} ADD FOREIGN KEY (appid) REFERENCES {GAMES}(appid) "
+         "ON DELETE CASCADE"),
         f"CREATE INDEX ON {_st('game_tags')} (tag)",
         # languages: a list in the Kaggle file, a comma-separated string with HTML in older scrapes
         f"""CREATE TABLE {_st("game_languages")} AS
@@ -380,8 +395,8 @@ SELECT s.appid, s.language, (a.language IS NOT NULL) AS full_audio
 FROM supported s LEFT JOIN audio a USING (appid, language)
 WHERE s.language <> ''""",
         f"ALTER TABLE {_st('game_languages')} ADD PRIMARY KEY (appid, language)",
-        f"ALTER TABLE {_st('game_languages')} ADD FOREIGN KEY (appid) REFERENCES {GAMES}(appid) "
-        "ON DELETE CASCADE",
+        (f"ALTER TABLE {_st('game_languages')} ADD FOREIGN KEY (appid) REFERENCES {GAMES}(appid) "
+         "ON DELETE CASCADE"),
         f"CREATE INDEX ON {_st('game_languages')} (language)",
         # packages and their purchase options
         f"""CREATE TABLE {_st("game_packages")} AS
@@ -389,8 +404,8 @@ SELECT appid, p.ord::int AS package_no, p.pkg->>'title' AS title, p.pkg->>'descr
 FROM {landing}, jsonb_array_elements({_arr("packages")}) WITH ORDINALITY AS p(pkg, ord)
 WHERE jsonb_typeof(p.pkg) = 'object'""",
         f"ALTER TABLE {_st('game_packages')} ADD PRIMARY KEY (appid, package_no)",
-        f"ALTER TABLE {_st('game_packages')} ADD FOREIGN KEY (appid) REFERENCES {GAMES}(appid) "
-        "ON DELETE CASCADE",
+        (f"ALTER TABLE {_st('game_packages')} ADD FOREIGN KEY (appid) REFERENCES {GAMES}(appid) "
+         "ON DELETE CASCADE"),
         f"""CREATE TABLE {_st("game_package_subs")} AS
 SELECT appid, p.ord::int AS package_no, s.ord::int AS sub_no,
        s.sub->>'text' AS text, s.sub->>'description' AS description,
@@ -401,22 +416,28 @@ FROM {landing},
          WITH ORDINALITY AS s(sub, ord)
 WHERE jsonb_typeof(s.sub) = 'object'""",
         f"ALTER TABLE {_st('game_package_subs')} ADD PRIMARY KEY (appid, package_no, sub_no)",
-        f"ALTER TABLE {_st('game_package_subs')} ADD FOREIGN KEY (appid, package_no) "
-        f"REFERENCES {_st('game_packages')}(appid, package_no) ON DELETE CASCADE",
+        (f"ALTER TABLE {_st('game_package_subs')} ADD FOREIGN KEY (appid, package_no) "
+         f"REFERENCES {_st('game_packages')}(appid, package_no) ON DELETE CASCADE"),
     ]
     return stmts
 
 
 def normalise(engine: Engine, landing_table: str = LANDING_TABLE) -> dict[str, int]:
-    """Rebuild every normalised table from the landing table in ONE transaction.  Returns row counts."""
+    """Rebuild every normalised table from the landing table in ONE transaction.
+
+    Returns the row count of each table.
+    """
     q = engine.dialect.identifier_preparer.quote
     landing = q(landing_table)
     counts: dict[str, int] = {}
     with engine.begin() as conn:
-        exists = conn.execute(text("SELECT to_regclass(:t) IS NOT NULL"), {"t": landing}).scalar_one()
+        exists = conn.execute(text("SELECT to_regclass(:t) IS NOT NULL"),
+                              {"t": landing}).scalar_one()
         if not exists:
-            raise JsonSanityError(f"Landing table {landing_table} does not exist; load the JSON first")
-        conn.execute(text(SAFE_DATE_FN))  # session-local helper; needs plpgsql, which is installed by default
+            raise JsonSanityError(
+                f"Landing table {landing_table} does not exist; load the JSON first")
+        # session-local helper; needs plpgsql, which is installed by default
+        conn.execute(text(SAFE_DATE_FN))
         log.info("Building %d tables in schema %s from %s ...", len(NORMALISED_TABLES),
                  STAGING_SCHEMA, landing_table)
         for stmt in normalise_statements(landing):

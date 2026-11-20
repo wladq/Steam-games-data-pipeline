@@ -32,8 +32,14 @@ sys.path.insert(0, str(HERE.parent))  # so `get_data` imports when run as a scri
 
 # pylint: disable=wrong-import-position
 from get_data.formatting import percent
-from get_data.prompts import ask_int, ask_selection
-from get_data.sql_runner import add_common_args, autocommit, execute, run_step
+from get_data.prompts import ask_int, ask_many, ask_one
+from get_data.sql_runner import (
+    add_common_args,
+    autocommit,
+    execute,
+    run_as_script,
+    run_step,
+)
 
 log = logging.getLogger("analyse_data")
 
@@ -313,17 +319,17 @@ def choose_interactively(conn, args: argparse.Namespace) -> None:
                            "python main.py get json")
     names = [name for name, _ in schemas]
     print("Schemas with tables:")
-    args.schema = ask_selection(
+    args.schema = ask_one(
         "Schema to profile, name or number", names,
         default=args.schema if args.schema in names else names[0],
-        notes={name: f"{count} table{'s' if count != 1 else ''}" for name, count in schemas})[0]
+        notes={name: f"{count} table{'s' if count != 1 else ''}" for name, count in schemas})
 
     tables = list_tables(conn, args.schema)
     every = [name for name, _ in tables]
     print(f"Tables in {args.schema}:")
-    chosen = ask_selection(
+    chosen = ask_many(
         "Tables to profile, names or numbers, comma separated (Enter = all)", every,
-        default="all", many=True, shortcuts={"all": every},
+        default="all", shortcuts={"all": every},
         notes={name: f"about {human(rows)} rows" if rows is not None else "not analysed yet"
                for name, rows in tables})
     args.table = None if len(chosen) == len(every) else ",".join(
@@ -333,9 +339,9 @@ def choose_interactively(conn, args: argparse.Namespace) -> None:
     args.sample_from = None
     if args.rows > 0 and len(chosen) > 1:
         print("Profiled tables:")
-        sampled = ask_selection(
+        sampled = ask_many(
             "Show random rows from which tables, comma separated (Enter = all, none = no rows)",
-            chosen, default="all", many=True, shortcuts={"all": chosen, "none": []})
+            chosen, default="all", shortcuts={"all": chosen, "none": []})
         if not sampled:
             args.rows = 0
         elif len(sampled) < len(chosen):
@@ -392,12 +398,5 @@ def profile_or_error(conn, schema: str, table: str, rows: int, quote) -> TableRe
         return TableReport(f"{schema}.{table}", "ERROR", detail=detail)
 
 
-def main() -> int:
-    """Entry point of `python analyse_data/basic_check.py`."""
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    add_arguments(parser)
-    return run(parser.parse_args())
-
-
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(run_as_script(__doc__, add_arguments, run))

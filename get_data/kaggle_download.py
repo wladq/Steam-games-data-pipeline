@@ -20,7 +20,7 @@ _REF_RE = re.compile(r"^(?P<owner>[A-Za-z0-9_.-]+)/(?P<name>[A-Za-z0-9_.-]+)")
 
 
 class DownloadError(RuntimeError):
-    pass
+    """Kaggle could not authenticate, list the dataset's files or download one."""
 
 
 def parse_dataset_ref(text: str) -> str:
@@ -30,17 +30,22 @@ def parse_dataset_ref(text: str) -> str:
     ref = re.sub(r"^datasets/", "", ref)
     match = _REF_RE.match(ref)
     if not match:
-        raise ValueError(f"Not a Kaggle dataset reference: {text!r}. Expected 'owner/dataset-name'.")
+        raise ValueError(f"Not a Kaggle dataset reference: {text!r}. "
+                         "Expected 'owner/dataset-name'.")
     return f"{match['owner']}/{match['name']}"
 
 
 def _make_api():
     # Import the class, not the package: `import kaggle` authenticates at import
-    # time and prints a help wall when no credentials exist.
+    # time and prints a help wall when no credentials exist.  Imported here so the
+    # other steps never load it, and a missing package becomes the clear message below.
     try:
+        # pylint: disable-next=import-outside-toplevel
         from kaggle.api.kaggle_api_extended import KaggleApi
     except ImportError:
-        raise DownloadError("The 'kaggle' package is not installed. Run: pip install kaggle") from None
+        raise DownloadError(
+            "The 'kaggle' package is not installed. Run: pip install kaggle"
+        ) from None
 
     api = KaggleApi()
     try:
@@ -63,7 +68,8 @@ def list_dataset_files(dataset: str, api=None) -> list[tuple[str, int]]:
             result = api.dataset_list_files(dataset, page_token=token, page_size=200)
             if getattr(result, "error_message", None):
                 raise DownloadError(f"Kaggle: {result.error_message}")
-            files += [(f.name, int(getattr(f, "total_bytes", 0) or 0)) for f in (result.files or [])]
+            files += [(f.name, int(getattr(f, "total_bytes", 0) or 0))
+                      for f in (result.files or [])]
             token = getattr(result, "next_page_token", None)
             if not token:
                 break
@@ -84,7 +90,8 @@ def download_dataset_file(dataset: str, file_name: str, dest_dir: Path, api=None
     api = api or _make_api()
     log.info("Downloading %s from kaggle.com/datasets/%s into %s ...", file_name, dataset, dest_dir)
     try:
-        api.dataset_download_file(dataset, file_name, path=str(dest_dir), force=True, quiet=False, unzip=True)
+        api.dataset_download_file(dataset, file_name, path=str(dest_dir), force=True,
+                                  quiet=False, unzip=True)
     except SystemExit:
         raise DownloadError(f"Kaggle refused the download of {file_name} from {dataset}.") from None
     except Exception as exc:  # HTTP 403/404 etc. surface as library-specific exceptions

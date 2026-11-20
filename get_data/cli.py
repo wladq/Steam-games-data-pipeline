@@ -20,7 +20,13 @@ import logging
 from pathlib import Path
 
 from . import __version__, json_load
-from .kaggle_download import clear_tmp, download_dataset_file, list_dataset_files, parse_dataset_ref
+from .kaggle_download import (
+    _make_api,
+    clear_tmp,
+    download_dataset_file,
+    list_dataset_files,
+    parse_dataset_ref,
+)
 from .prompts import PromptError, ask_text, ask_yes_no
 from .sql_runner import add_behaviour_args, add_db_args, guarded, open_engine, start
 
@@ -42,7 +48,7 @@ examples (python main.py get takes exactly the same):
   python -m get_data json -l tmp/games.json -y    local file, yes to every y/n question
   python -m get_data json                         the dataset's JSON file instead of its CSV
   python -m get_data --dry-run                    download and check only, no database
-  python -m get_data --normalise-only             rebuild schema staging from {DEFAULT_TABLE['json']}
+  python -m get_data --normalise-only             rebuild staging from {DEFAULT_TABLE["json"]}
 
 The password is never a flag. Set PGPASSWORD to skip the prompt.
 Connection settings can be saved to {CONFIG_PATH.name}; delete it to forget them.
@@ -51,17 +57,20 @@ Connection settings can be saved to {CONFIG_PATH.name}; delete it to forget them
 
 # --- command line ----------------------------------------------------------------
 
+
 def usage(prog: str, manual: bool = False) -> str:
     """The usage line in the documented order: what, where from, where to, place, behaviour.
 
     argparse would list the format word last, so the line is written out by hand.
     """
     indent = " " * (len("usage: ") + len(prog) + 1)
-    lines = [f"{prog} [-h]{' [-m]' if manual else ''} [{{csv,json}}]",
-             "[-k OWNER/NAME | -l FILE] [-f NAME]",
-             "[-U USER] [-d DATABASE] [-H HOST] [-p PORT]",
-             "[--table TABLE] [--normalise-only]",
-             "[-y] [-v] [--log-dir LOG_DIR] [--dry-run]"]
+    lines = [
+        f"{prog} [-h]{' [-m]' if manual else ''} [{{csv,json}}]",
+        "[-k OWNER/NAME | -l FILE] [-f NAME]",
+        "[-U USER] [-d DATABASE] [-H HOST] [-p PORT]",
+        "[--table TABLE] [--normalise-only]",
+        "[-y] [-v] [--log-dir LOG_DIR] [--dry-run]",
+    ]
     return ("\n" + indent).join(lines)
 
 
@@ -72,43 +81,73 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
     `python main.py get`, and main() below for `python -m get_data`.
     """
     what = parser.add_argument_group("what")
-    what.add_argument("what", nargs="?", choices=FORMATS,
-                      help="data format (default: csv, or json when the file is "
-                           ".json or the dataset has no CSV)")
+    what.add_argument(
+        "what",
+        nargs="?",
+        choices=FORMATS,
+        help="data format (default: csv, or json when the file is "
+        ".json or the dataset has no CSV)",
+    )
 
     source = parser.add_argument_group("where from (asked when neither is given)")
     one = source.add_mutually_exclusive_group()
-    one.add_argument("-k", "--kaggle", metavar="OWNER/NAME",
-                     help=f"Kaggle dataset, e.g. {DEFAULT_DATASET}")
-    one.add_argument("-l", "--local", dest="local_file", type=Path, metavar="FILE",
-                     help="local .csv or .json file instead of a download")
-    source.add_argument("-f", "--file", metavar="NAME",
-                        help="exact file to take from the Kaggle dataset")
+    one.add_argument(
+        "-k",
+        "--kaggle",
+        metavar="OWNER/NAME",
+        help=f"Kaggle dataset, e.g. {DEFAULT_DATASET}",
+    )
+    one.add_argument(
+        "-l",
+        "--local",
+        dest="local_file",
+        type=Path,
+        metavar="FILE",
+        help="local .csv or .json file instead of a download",
+    )
+    source.add_argument(
+        "-f",
+        "--file",
+        metavar="NAME",
+        help="exact file to take from the Kaggle dataset",
+    )
 
     add_db_args(parser, "where to (flag > saved config > prompt)")
 
     place = parser.add_argument_group("place")
-    place.add_argument("--table",
-                       help=f"target table (default: {DEFAULT_TABLE['csv']} for CSV, "
-                            f"{DEFAULT_TABLE['json']} for JSON)")
-    place.add_argument("--normalise-only", action="store_true",
-                       help="skip loading; rebuild the tables in schema staging from the "
-                            "existing JSON landing table")
+    place.add_argument(
+        "--table",
+        help=f"target table (default: {DEFAULT_TABLE['csv']} for CSV, "
+        f"{DEFAULT_TABLE['json']} for JSON)",
+    )
+    place.add_argument(
+        "--normalise-only",
+        action="store_true",
+        help="skip loading; rebuild the tables in schema staging from the "
+        "existing JSON landing table",
+    )
 
     behaviour = add_behaviour_args(parser)
-    behaviour.add_argument("--dry-run", action="store_true",
-                           help="get, fix and check the data, but do not touch the database")
+    behaviour.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="get, fix and check the data, but do not touch the database",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
     """The parser of `python -m get_data`: the same flags as `python main.py get`."""
     parser = argparse.ArgumentParser(
-        prog="python -m get_data", usage=usage("python -m get_data"),
-        description=DESCRIPTION, epilog=EPILOG,
+        prog="python -m get_data",
+        usage=usage("python -m get_data"),
+        description=DESCRIPTION,
+        epilog=EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     add_arguments(parser)
-    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    parser.add_argument(
+        "--version", action="version", version=f"%(prog)s {__version__}"
+    )
     return parser
 
 
@@ -132,15 +171,22 @@ def step_get_file(args) -> Path:
     elif args.kaggle:
         path = _from_kaggle(parse_dataset_ref(args.kaggle), args)
     else:
-        kind, value = classify_source(ask_text(SOURCE_QUESTION, default=DEFAULT_DATASET,
-                                               flag_hint="--kaggle or --local"))
+        kind, value = classify_source(
+            ask_text(
+                SOURCE_QUESTION,
+                default=DEFAULT_DATASET,
+                flag_hint="--kaggle or --local",
+            )
+        )
         path = value if kind == "local" else _from_kaggle(value, args)
 
     if not path.is_file():
         raise FileNotFoundError(f"File not found: {path}")
     if args.what and data_format(path) != args.what:
-        raise ValueError(f"Asked for {args.what.upper()}, but {path.name} is a "
-                         f"{data_format(path).upper()} file")
+        raise ValueError(
+            f"Asked for {args.what.upper()}, but {path.name} is a "
+            f"{data_format(path).upper()} file"
+        )
     log.info("Using %s (%.1f MB)", path, path.stat().st_size / 1e6)
     return path
 
@@ -152,47 +198,63 @@ def _choose_kaggle_file(files: list[tuple[str, int]], args) -> str:
     log.info("Dataset files: %s", listing)
     if args.file:
         if args.file not in names:
-            raise FileNotFoundError(f"{args.file} is not in the dataset. Available: {', '.join(names)}")
+            raise FileNotFoundError(
+                f"{args.file} is not in the dataset. Available: {', '.join(names)}"
+            )
         return args.file
 
-    by_fmt = {fmt: [n for n in names if n.lower().endswith("." + fmt)] for fmt in ("csv", "json")}
+    by_fmt = {
+        fmt: [n for n in names if n.lower().endswith("." + fmt)]
+        for fmt in ("csv", "json")
+    }
     if args.what:
         fmt = args.what
         if not by_fmt[fmt]:
-            raise FileNotFoundError(f"{fmt.upper()} requested, but the dataset has no "
-                                    f".{fmt} file. Available: {', '.join(names)}")
+            raise FileNotFoundError(
+                f"{fmt.upper()} requested, but the dataset has no "
+                f".{fmt} file. Available: {', '.join(names)}"
+            )
     elif by_fmt["csv"]:
         fmt = "csv"
     elif by_fmt["json"]:
         fmt = "json"
         log.info("The dataset has no CSV file; using its JSON file")
     else:
-        raise FileNotFoundError(f"The dataset has neither a CSV nor a JSON file. Available: {', '.join(names)}")
+        raise FileNotFoundError(
+            f"The dataset has neither a CSV nor a JSON file. Available: {', '.join(names)}"
+        )
 
     candidates = by_fmt[fmt]
     if PREFERRED_FILE[fmt] in candidates or len(candidates) == 1:
-        return PREFERRED_FILE[fmt] if PREFERRED_FILE[fmt] in candidates else candidates[0]
-    return ask_text(f"Several {fmt.upper()} files; which one? ({', '.join(candidates)})",
-                    default=candidates[0], flag_hint="--file")
+        return (
+            PREFERRED_FILE[fmt] if PREFERRED_FILE[fmt] in candidates else candidates[0]
+        )
+    return ask_text(
+        f"Several {fmt.upper()} files; which one? ({', '.join(candidates)})",
+        default=candidates[0],
+        flag_hint="--file",
+    )
 
 
 def _from_kaggle(dataset: str, args) -> Path:
-    from .kaggle_download import _make_api  # one authenticated client for listing and download
-
-    api = _make_api()
+    api = _make_api()  # one authenticated client for listing and download
     file_name = _choose_kaggle_file(list_dataset_files(dataset, api), args)
     target = TMP_DIR / file_name
     if target.is_file() and ask_yes_no(
-            f"{target.relative_to(PROJECT_ROOT)} is left over from an earlier run. Reuse it instead of downloading?"):
+        f"{target.relative_to(PROJECT_ROOT)} is left over from an earlier run. "
+        "Reuse it instead of downloading?"
+    ):
         return target
     return download_dataset_file(dataset, file_name, TMP_DIR, api)
 
 
 def data_format(path: Path) -> str:
+    """The data format of a file, by its extension: json for .json, csv otherwise."""
     return "json" if path.suffix.lower() == ".json" else "csv"
 
 
 # --- shared steps --------------------------------------------------------------
+
 
 def connect(args):
     """The shared connection (up to three password attempts), offering to save the
@@ -218,6 +280,7 @@ def step_cleanup(used: Path | None) -> None:
 # these steps only, so `python main.py --help` and the other parts start instantly.
 # pylint: disable=import-outside-toplevel
 
+
 def step_fix_header(csv_path: Path):
     """Read the CSV, offering to repair the shifted 'DiscountDLC count' header first."""
     from . import transform
@@ -227,8 +290,11 @@ def step_fix_header(csv_path: Path):
         log.info("Header check: no shifted header found, reading the file as is")
         return transform.read_csv(csv_path)
 
-    log.warning("Header check: '%s' is two names glued together, so every column after it "
-                "is shifted", transform.GLUED_HEADER)
+    log.warning(
+        "Header check: '%s' is two names glued together, so every column after it "
+        "is shifted",
+        transform.GLUED_HEADER,
+    )
     if ask_yes_no(f"Fix the header by splitting it into {transform.SPLIT_HEADER}?"):
         df = transform.read_csv(csv_path, names=transform.fix_shifted_header(columns))
         log.info("Header fixed")
@@ -240,7 +306,9 @@ def step_fix_header(csv_path: Path):
 
 def step_tidy_columns(df):
     """Offer snake_case column names, show the shape before and after, then confirm."""
-    if not ask_yes_no("Tidy column names to snake_case (e.g. 'Estimated owners' -> estimated_owners)?"):
+    if not ask_yes_no(
+        "Tidy column names to snake_case (e.g. 'Estimated owners' -> estimated_owners)?"
+    ):
         log.info("Keeping the original column names")
         return df
 
@@ -271,9 +339,13 @@ def step_sanity_check(df) -> str:
 
     summary = transform.sanity_check(df)
     blanks = summary["blank_discounts"]
-    log.info("Sanity check passed: %d rows x %d columns, every appid is numeric and unique, "
-             "every discount is within 0-100%s",
-             summary["rows"], summary["columns"], f" ({blanks} blank)" if blanks else "")
+    log.info(
+        "Sanity check passed: %d rows x %d columns, every appid is numeric and unique, "
+        "every discount is within 0-100%s",
+        summary["rows"],
+        summary["columns"],
+        f" ({blanks} blank)" if blanks else "",
+    )
     return summary["appid_column"]
 
 
@@ -292,13 +364,18 @@ def run_csv(csv_path: Path, table: str, engine) -> None:
 
 # --- JSON steps ----------------------------------------------------------------
 
+
 def step_normalise(engine, landing_table: str) -> None:
     """Offer to rebuild the staging tables, then to drop their old copies in public."""
     schema = json_load.STAGING_SCHEMA
-    if not ask_yes_no(f"Build the {len(json_load.NORMALISED_TABLES)} wide tables in schema "
-                      f"{schema} (games, game_tags, ...) from {landing_table}? Existing "
-                      f"tables in {schema} are replaced."):
-        log.info("Staging tables not built. Rerun with --normalise-only to build them later")
+    if not ask_yes_no(
+        f"Build the {len(json_load.NORMALISED_TABLES)} wide tables in schema "
+        f"{schema} (games, game_tags, ...) from {landing_table}? Existing "
+        f"tables in {schema} are replaced."
+    ):
+        log.info(
+            "Staging tables not built. Rerun with --normalise-only to build them later"
+        )
         return
     json_load.normalise(engine, landing_table)
 
@@ -307,7 +384,9 @@ def step_normalise(engine, landing_table: str) -> None:
         return
     old = json_load.LEGACY_SCHEMA
     log.info("Earlier versions built the same tables in %s: %s", old, ", ".join(legacy))
-    if ask_yes_no(f"Drop these old copies from {old}? They are now in {schema}.", default=False):
+    if ask_yes_no(
+        f"Drop these old copies from {old}? They are now in {schema}.", default=False
+    ):
         json_load.drop_legacy(engine, legacy)
     else:
         log.info("Kept the old copies in %s", old)
@@ -327,6 +406,7 @@ def run_json(json_path: Path, table: str, engine) -> None:
 
 
 def run_normalise_only(args) -> None:
+    """Rebuild schema staging from the JSON landing table already loaded."""
     table = args.table or DEFAULT_TABLE["json"]
     if args.dry_run:
         log.info("Dry run with --normalise-only: nothing to do")
@@ -339,6 +419,7 @@ def run_normalise_only(args) -> None:
 
 
 # --- main --------------------------------------------------------------------
+
 
 def run(args, state: dict) -> None:
     """Get the file, then load it as CSV or JSON."""

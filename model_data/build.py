@@ -22,6 +22,7 @@ from get_data.sql_runner import (
     add_common_args,
     execute,
     read_statements,
+    run_as_script,
     run_step,
 )
 
@@ -117,12 +118,5 @@ def run(args: argparse.Namespace) -> int:
     return run_step(args, work, log)
 
 
-def main() -> int:
-    """Run the build process."""
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    add_arguments(parser)
-    return run(parser.parse_args())
-
-
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(run_as_script(__doc__, add_arguments, run))

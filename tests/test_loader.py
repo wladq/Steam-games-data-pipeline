@@ -16,21 +16,23 @@ import json
 import math
 import os
 import re
+import shutil
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import ClassVar
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 # pylint: disable=wrong-import-position,protected-access
-from sqlalchemy.exc import OperationalError  # noqa: E402
+from sqlalchemy.exc import OperationalError
 
-from get_data import cli, db, json_load  # noqa: E402
-from get_data.config import DbSettings, resolve_settings  # noqa: E402
-from get_data.prompts import ask_choice, ask_int, ask_selection  # noqa: E402
-from get_data.transform import read_csv  # noqa: E402
+from get_data import cli, db, json_load
+from get_data.config import DbSettings, resolve_settings
+from get_data.prompts import ask_choice, ask_int, ask_many, ask_one
+from get_data.transform import read_csv
 
 BOTH = [("games.csv", 401_000_000), ("games.json", 1_008_000_000)]
 JSON_ONLY = [("games.json", 1_008_000_000)]
@@ -48,9 +50,8 @@ class TempDirTest(unittest.TestCase):
     """Gives each test a temporary folder in self.tmp."""
 
     def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.tmp = Path(tmp.name)
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
 
 
 class ClassifySourceTest(TempDirTest):
@@ -158,8 +159,9 @@ class ConnectFirstTest(unittest.TestCase):
 class OneCommandLineTest(unittest.TestCase):
     """python -m get_data and python main.py get share one definition of their flags."""
 
-    ARGV = ["json", "-k", "owner/name", "-f", "games.json", "-U", "me", "-d", "steam",
-            "-H", "DebianServ", "-p", "5432", "--table", "landing", "-y", "-v", "--dry-run"]
+    ARGV: ClassVar[list[str]] = [
+        "json", "-k", "owner/name", "-f", "games.json", "-U", "me", "-d", "steam",
+        "-H", "DebianServ", "-p", "5432", "--table", "landing", "-y", "-v", "--dry-run"]
 
     @staticmethod
     def parse(parser, argv):
@@ -195,7 +197,7 @@ class OneCommandLineTest(unittest.TestCase):
 class AskChoiceTest(unittest.TestCase):
     """ask_choice accepts a full answer, a unique beginning, or Enter for the default."""
 
-    PARTS = ["get", "model", "qa", "analyse", "debug"]
+    PARTS: ClassVar[list[str]] = ["get", "model", "qa", "analyse", "debug"]
 
     def test_full_answer_and_unique_beginning(self):
         with typing("qa", "an"):
@@ -211,40 +213,46 @@ class AskChoiceTest(unittest.TestCase):
             self.assertEqual(ask_choice("What", ["csv", "json"], default="csv"), "csv")
 
 
-class AskSelectionTest(unittest.TestCase):
-    """ask_selection lists the options numbered and accepts names, numbers and shortcuts."""
+class AskOneAndManyTest(unittest.TestCase):
+    """ask_one / ask_many number the options and accept names, numbers and shortcuts."""
 
-    OPTIONS = ["games", "game_tags", "tags"]
+    OPTIONS: ClassVar[list[str]] = ["games", "game_tags", "tags"]
 
-    def ask(self, *answers, **kwargs):
-        """Run ask_selection with typed answers; return (result, printed text)."""
+    def ask(self, prompt, *answers, **kwargs):
+        """Run prompt (ask_one or ask_many) with typed answers; return (result, printed)."""
         out = io.StringIO()
         with mock.patch("builtins.input", side_effect=list(answers)), \
                 contextlib.redirect_stdout(out):
-            result = ask_selection("Tables", self.OPTIONS, **kwargs)
+            result = prompt("Tables", self.OPTIONS, **kwargs)
         return result, out.getvalue()
 
     def test_options_are_listed_with_numbers_and_notes(self):
-        _, printed = self.ask("1", notes={"games": "about 148.9k rows"})
+        result, printed = self.ask(ask_one, "1", notes={"games": "about 148.9k rows"})
+        self.assertEqual(result, "games")
         self.assertIn("1  games   about 148.9k rows", printed)
         self.assertIn("3  tags", printed)
 
     def test_names_and_numbers_mixed_in_a_comma_list(self):
-        result, _ = self.ask("3, GAMES ,3", many=True)
+        result, _ = self.ask(ask_many, "3, GAMES ,3")
         self.assertEqual(result, ["tags", "games"])
 
     def test_shortcut_and_default(self):
-        result, _ = self.ask("", default="all", many=True,
+        result, _ = self.ask(ask_many, "", default="all",
                              shortcuts={"all": self.OPTIONS, "none": []})
         self.assertEqual(result, self.OPTIONS)
-        result, _ = self.ask("none", many=True, shortcuts={"none": []})
+        result, _ = self.ask(ask_many, "none", shortcuts={"none": []})
         self.assertEqual(result, [])
 
     def test_unknown_items_and_too_many_are_asked_again(self):
-        result, printed = self.ask("players", "1,2", "2")
-        self.assertEqual(result, ["game_tags"])
+        result, printed = self.ask(ask_one, "players", "1,2", "2")
+        self.assertEqual(result, "game_tags")
         self.assertIn("Not in the list: players", printed)
         self.assertIn("only one", printed)
+
+    def test_many_asks_again_after_an_unknown_item(self):
+        result, printed = self.ask(ask_many, "1,players", "1,2")
+        self.assertEqual(result, ["games", "game_tags"])
+        self.assertIn("Not in the list: players", printed)
 
     def test_ask_int_repeats_until_a_whole_number(self):
         with typing("x", ""):

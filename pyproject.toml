@@ -46,7 +46,7 @@ Repository = "https://github.com/wladq/Steam-games-data-pipeline"
 Issues = "https://github.com/wladq/Steam-games-data-pipeline/issues"
 
 [dependency-groups]
-dev = ["pylint", "ruff"]
+dev = ["pylint", "ruff >= 0.17, < 0.18"]  # Ruff's range must match [tool.ruff] below
 
 [tool.hatch.version]
 path = "get_data/__init__.py"
@@ -54,3 +54,18 @@ path = "get_data/__init__.py"
 [tool.hatch.build.targets.wheel]
 # several top-level folders instead of one package named after the project
 packages = ["get_data", "model_data", "qa_data", "analyse_data", "dashboard"]
+
+[tool.pylint.basic]
+# a test method's name already says what it tests, so test_* needs no docstring;
+# setUp/tearDown are unittest hooks, and _private helpers stay exempt as by default
+no-docstring-rgx = "^(_|test_|setUp|tearDown)"
+
+[tool.ruff]
+# Ruff changes its default rules in minor releases (0.17 turned on about 400 of them),
+# so another minor version would check different things.  Pinning it keeps the same
+# rules on every machine and in VS Code; a different Ruff stops with an error instead.
+# To move up: raise this range and the one in [dependency-groups], run ruff check,
+# then fix or accept what the new defaults report.
+required-version = ">=0.17,<0.18"
+# pylint's limit, for ruff check and the Ruff formatter
+line-length = 100
